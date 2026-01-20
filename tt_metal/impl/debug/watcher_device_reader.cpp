@@ -238,12 +238,14 @@ struct WatcherDeviceReader::DumpData {
 
 class WatcherDeviceReader::Core {
 private:
+    ChipId device_id_;
     CoreCoord virtual_coord_;
     HalProgrammableCoreType programmable_core_type_;
     std::string core_str_;
     std::vector<std::byte> l1_read_buf_;
     dev_msgs::mailboxes_t::ConstView mbox_data_;
     dev_msgs::launch_msg_t::ConstView launch_msg_;
+    dev_msgs::Factory dev_msgs_factory_;
     const WatcherDeviceReader& reader_;
     DumpData& dump_data_;
 
@@ -263,6 +265,7 @@ private:
     void ValidateKernelIDs() const;
 
     Core(
+        ChipId device_id,
         CoreCoord virtual_coord,
         HalProgrammableCoreType programmable_core_type,
         std::string core_str,
@@ -270,12 +273,14 @@ private:
         dev_msgs::Factory dev_msgs_factory,
         const WatcherDeviceReader& reader,
         DumpData& dump_data) :
+        device_id_(device_id),
         virtual_coord_(virtual_coord),
         programmable_core_type_(programmable_core_type),
         core_str_(std::move(core_str)),
         l1_read_buf_(std::move(l1_read_buf)),
         mbox_data_(dev_msgs_factory.create_view<dev_msgs::mailboxes_t>(l1_read_buf_.data())),
         launch_msg_(get_valid_launch_message(mbox_data_)),
+        dev_msgs_factory_(dev_msgs_factory),
         reader_(reader),
         dump_data_(dump_data) {}
 
@@ -362,6 +367,24 @@ void WatcherDeviceReader::Dump(FILE* file) {
     }
 
     DumpData dump_data;
+    const auto& rtoptions = tt::tt_metal::MetalContext::instance().rtoptions();
+    bool filter_enabled = rtoptions.get_feature_enabled(tt::llrt::RunTimeDebugFeatureWatcher);
+    auto should_dump_core = [&](const CoreCoord& logical_core, CoreType core_type) {
+        if (!filter_enabled) {
+            return true;
+        }
+        int all_flag = rtoptions.get_feature_all_cores(tt::llrt::RunTimeDebugFeatureWatcher, core_type);
+        if (all_flag == tt::llrt::RunTimeDebugClassAll || all_flag == tt::llrt::RunTimeDebugClassWorker ||
+            all_flag == tt::llrt::RunTimeDebugClassDispatch) {
+            return true;
+        }
+        const auto& feature_cores = rtoptions.get_feature_cores(tt::llrt::RunTimeDebugFeatureWatcher);
+        auto it = feature_cores.find(core_type);
+        if (it == feature_cores.end()) {
+            return false;
+        }
+        return std::find(it->second.begin(), it->second.end(), logical_core) != it->second.end();
+    };
 
     // Dump worker cores
     CoreCoord grid_size =
@@ -369,18 +392,24 @@ void WatcherDeviceReader::Dump(FILE* file) {
     for (uint32_t y = 0; y < grid_size.y; y++) {
         for (uint32_t x = 0; x < grid_size.x; x++) {
             CoreCoord coord = {x, y};
-            Core::Create(coord, HalProgrammableCoreType::TENSIX, *this, dump_data).Dump();
+            if (should_dump_core(coord, CoreType::WORKER)) {
+                Core::Create(coord, HalProgrammableCoreType::TENSIX, *this, dump_data).Dump();
+            }
         }
     }
 
     // Dump eth cores
     for (const CoreCoord& eth_core :
          tt::tt_metal::MetalContext::instance().get_control_plane().get_active_ethernet_cores(device_id)) {
-        Core::Create(eth_core, HalProgrammableCoreType::ACTIVE_ETH, *this, dump_data).Dump();
+        if (should_dump_core(eth_core, CoreType::ETH)) {
+            Core::Create(eth_core, HalProgrammableCoreType::ACTIVE_ETH, *this, dump_data).Dump();
+        }
     }
     for (const CoreCoord& eth_core :
          tt::tt_metal::MetalContext::instance().get_control_plane().get_inactive_ethernet_cores(device_id)) {
-        Core::Create(eth_core, HalProgrammableCoreType::IDLE_ETH, *this, dump_data).Dump();
+        if (should_dump_core(eth_core, CoreType::ETH)) {
+            Core::Create(eth_core, HalProgrammableCoreType::IDLE_ETH, *this, dump_data).Dump();
+        }
     }
 
     for (auto k_id : dump_data.used_kernel_names) {
@@ -515,6 +544,7 @@ WatcherDeviceReader::Core WatcherDeviceReader::Core::Create(
     tt::tt_metal::MetalContext::instance().get_cluster().read_core(
         l1_read_buf.data(), l1_read_buf.size(), {reader.device_id, virtual_coord}, mailbox_addr);
     return Core(
+        reader.device_id,
         virtual_coord,
         programmable_core_type,
         std::move(core_str),
@@ -533,16 +563,36 @@ void WatcherDeviceReader::Core::Dump() const {
     ValidateKernelIDs();
 
     // Whether or not watcher data is available depends on a flag set on the device.
+    bool enabled = false;
     if (mbox_data_.watcher().enable() != dev_msgs::WatcherEnabled and
         mbox_data_.watcher().enable() != dev_msgs::WatcherDisabled) {
-        TT_THROW(
-            "Watcher read invalid watcher.enable on {}. Read {}, valid values are {} and {}.",
-            core_str_,
-            mbox_data_.watcher().enable(),
-            dev_msgs::WatcherEnabled,
-            dev_msgs::WatcherDisabled);
+        if (rtoptions.get_simulator_enabled()) {
+            const auto& hal = MetalContext::instance().hal();
+            uint64_t mailbox_addr =
+                hal.get_dev_addr(programmable_core_type_, HalL1MemAddrType::MAILBOX);
+            size_t watcher_offset =
+                dev_msgs_factory_.offset_of<dev_msgs::mailboxes_t>(dev_msgs::mailboxes_t::Field::watcher) +
+                dev_msgs_factory_.offset_of<dev_msgs::watcher_msg_t>(dev_msgs::watcher_msg_t::Field::enable);
+            uint32_t value = dev_msgs::WatcherDisabled;
+            tt::tt_metal::MetalContext::instance().get_cluster().write_core(
+                &value, sizeof(value), {device_id_, virtual_coord_}, mailbox_addr + watcher_offset);
+            log_warning(
+                tt::LogMetal,
+                "Watcher read invalid watcher.enable on {} (value {}). Initialized to disabled for simulator.",
+                core_str_,
+                mbox_data_.watcher().enable());
+            enabled = false;
+        } else {
+            TT_THROW(
+                "Watcher read invalid watcher.enable on {}. Read {}, valid values are {} and {}.",
+                core_str_,
+                mbox_data_.watcher().enable(),
+                dev_msgs::WatcherEnabled,
+                dev_msgs::WatcherDisabled);
+        }
+    } else {
+        enabled = (mbox_data_.watcher().enable() == dev_msgs::WatcherEnabled);
     }
-    bool enabled = (mbox_data_.watcher().enable() == dev_msgs::WatcherEnabled);
 
     if (enabled) {
         // Dump state only gathered if device is compiled w/ watcher

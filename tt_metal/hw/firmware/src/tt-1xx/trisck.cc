@@ -37,6 +37,7 @@ volatile tt_reg_ptr uint* mailbox_base[4] = {
 }  // namespace ckernel
 
 extern "C" [[gnu::section(".start")]]
+
 uint32_t _start() {
     // Enable GPREL optimizations.
     asm("0: .reloc 0b, R_RISCV_NONE, __global_pointer$");

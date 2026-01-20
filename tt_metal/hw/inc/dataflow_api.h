@@ -17,15 +17,15 @@
 #include <tuple>
 #include <utility>
 #include <type_traits>
+#include "dev_msgs.h"
 
-#include "dataflow_api_addrgen.h"
 #include "core_config.h"
 #include "circular_buffer.h"
 #include "eth_l1_address_map.h"
 #include "hostdevcommon/common_values.hpp"
 #include "risc_attribs.h"
 #include "compile_time_args.h"
-#include "dev_msgs.h"
+#include "dataflow_api_addrgen.h"
 #include "accessor/tensor_accessor.h"
 #include "tools/profiler/kernel_profiler.hpp"
 

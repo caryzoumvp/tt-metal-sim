@@ -354,7 +354,8 @@ void WriteInitMagic(ChipId device_id, const CoreCoord& virtual_core, int risc_id
     // 2. the packet will arrive to set the wpos = DEBUG_PRINT_SERVER_STARTING_MAGIC
     // 3. the actual host polling function will read wpos = DEBUG_PRINT_SERVER_STARTING_MAGIC
     // 4. now we will access wpos at the starting magic which is incorrect
-    uint32_t num_tries = 100000;
+    //uint32_t num_tries = 100000;
+    uint32_t num_tries = 100;
     while (num_tries-- > 0) {
         auto result =
             tt::tt_metal::MetalContext::instance().get_cluster().read_core(device_id, virtual_core, base_addr, 4);
@@ -362,8 +363,17 @@ void WriteInitMagic(ChipId device_id, const CoreCoord& virtual_core, int risc_id
             (result[0] == DEBUG_PRINT_SERVER_DISABLED_MAGIC && !enabled)) {
             return;
         }
-    }
-    TT_THROW("Timed out writing init magic");
+        if ((num_tries == 0) && (tt::tt_metal::MetalContext::instance().rtoptions().get_simulator_enabled())) {
+            log_warning(
+                tt::LogMetal,
+                "Timed out writing init magic on simulator for core {} risc {} (base addr 0x{:x} result 0x{:x} enabled={})",
+                virtual_core.str(),
+                risc_id,
+                base_addr, result[0],
+                enabled);
+            TT_THROW("Timed out writing init magic");
+        }
+    } 
 }  // WriteInitMagic
 
 // Checks if our magic value was cleared by the device code
@@ -560,12 +570,75 @@ void DPrintServer::Impl::await() {
 void DPrintServer::Impl::init_device(ChipId device_id) {
     const auto& hal = tt::tt_metal::MetalContext::instance().hal();
     tt::tt_metal::CoreDescriptorSet all_cores = tt::tt_metal::GetAllCores(device_id);
-    // Initialize all print buffers on all cores on the device to have print disabled magic. We
-    // will then write print enabled magic for only the cores the user has specified to monitor.
-    // This way in the kernel code (dprint.h) we can detect whether the magic value is present and
-    // skip prints entirely to prevent kernel code from hanging waiting for the print buffer to be
-    // flushed from the host.
-    for (auto& logical_core : all_cores) {
+    tt::tt_metal::CoreDescriptorSet dispatch_cores = tt::tt_metal::GetDispatchCores(device_id);
+    const auto& rtoptions = tt_metal::MetalContext::instance().rtoptions();
+    std::vector<ChipId> chip_ids = rtoptions.get_feature_chip_ids(tt::llrt::RunTimeDebugFeatureDprint);
+
+    if (!rtoptions.get_feature_all_chips(tt::llrt::RunTimeDebugFeatureDprint)) {
+        if (std::find(chip_ids.begin(), chip_ids.end(), device_id) == chip_ids.end()) {
+            return;
+        }
+    }
+
+    // Initialize print buffers on only the cores the user has specified to monitor.
+    std::vector<umd::CoreDescriptor> print_cores_sanitized;
+    for (CoreType core_type : {CoreType::WORKER, CoreType::ETH}) {
+        if (rtoptions.get_feature_all_cores(tt::llrt::RunTimeDebugFeatureDprint, core_type) ==
+            tt::llrt::RunTimeDebugClassAll) {
+            for (umd::CoreDescriptor logical_core : all_cores) {
+                if (logical_core.type == core_type) {
+                    print_cores_sanitized.push_back(logical_core);
+                }
+            }
+        } else if (
+            rtoptions.get_feature_all_cores(tt::llrt::RunTimeDebugFeatureDprint, core_type) ==
+            tt::llrt::RunTimeDebugClassDispatch) {
+            for (umd::CoreDescriptor logical_core : dispatch_cores) {
+                if (logical_core.type == core_type) {
+                    print_cores_sanitized.push_back(logical_core);
+                }
+            }
+        } else if (
+            rtoptions.get_feature_all_cores(tt::llrt::RunTimeDebugFeatureDprint, core_type) ==
+            tt::llrt::RunTimeDebugClassWorker) {
+            for (umd::CoreDescriptor logical_core : all_cores) {
+                if (dispatch_cores.find(logical_core) == dispatch_cores.end()) {
+                    if (logical_core.type == core_type) {
+                        print_cores_sanitized.push_back(logical_core);
+                    }
+                }
+            }
+        } else {
+            const std::vector<CoreCoord>& print_cores =
+                rtoptions.get_feature_cores(tt::llrt::RunTimeDebugFeatureDprint).at(core_type);
+            for (auto& logical_core : print_cores) {
+                CoreCoord virtual_core;
+                bool valid_logical_core = true;
+                try {
+                    virtual_core =
+                        tt::tt_metal::MetalContext::instance()
+                            .get_cluster()
+                            .get_virtual_coordinate_from_logical_coordinates(device_id, logical_core, core_type);
+                } catch (std::runtime_error& error) {
+                    valid_logical_core = false;
+                }
+                if (valid_logical_core && all_cores.count({logical_core, core_type}) > 0) {
+                    print_cores_sanitized.push_back({logical_core, core_type});
+                } else {
+                    log_warning(
+                        tt::LogMetal,
+                        "TT_METAL_DPRINT_CORES included {} core with logical coordinates {} (virtual coordinates {}), "
+                        "which is not a valid core on device {}. This coordinate will be ignored by the dprint server.",
+                        tt::tt_metal::get_core_type_name(core_type),
+                        logical_core.str(),
+                        valid_logical_core ? virtual_core.str() : "INVALID",
+                        device_id);
+                }
+            }
+        }
+    }
+
+    for (auto& logical_core : print_cores_sanitized) {
         CoreCoord virtual_core =
             tt::tt_metal::MetalContext::instance().get_cluster().get_virtual_coordinate_from_logical_coordinates(
                 device_id, logical_core.coord, logical_core.type);

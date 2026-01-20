@@ -684,6 +684,17 @@ bool DataMovementKernel::configure(
     const ll_api::memory& binary_mem =
         *this->binaries(BuildEnvManager::get_instance().get_device_build_env(device->build_id()).build_key())[0];
     int riscv_id = static_cast<std::underlying_type<DataMovementProcessor>::type>(this->config_.processor);
+    log_debug(
+        LogLoader,
+        "DM kernel {} core {} base=0x{:x} offset[{}]=0x{:x} dest=0x{:x} text=0x{:x} size=0x{:x}",
+        this->name(),
+        logical_core.str(),
+        base_address,
+        riscv_id,
+        offsets[riscv_id],
+        base_address + offsets[riscv_id],
+        static_cast<uint32_t>(binary_mem.get_text_addr()),
+        binary_mem.get_packed_size());
     llrt::write_binary_to_address(binary_mem, device_id, worker_core, base_address + offsets[riscv_id]);
 
     return true;
@@ -702,6 +713,17 @@ bool EthernetKernel::configure(
             this->get_kernel_programmable_core_type(),
             HalProcessorClassType::DM,
             enchantum::to_underlying(this->config_.processor));
+        log_debug(
+            LogLoader,
+            "ETH kernel {} core {} base=0x{:x} offset[{}]=0x{:x} dest=0x{:x} text=0x{:x} size=0x{:x}",
+            this->name(),
+            logical_core.str(),
+            base_address,
+            offset_idx,
+            offsets[offset_idx],
+            base_address + offsets[offset_idx],
+            static_cast<uint32_t>(binary_mem.get_text_addr()),
+            binary_mem.get_packed_size());
         llrt::write_binary_to_address(binary_mem, device_id, ethernet_core, base_address + offsets[offset_idx]);
     } else {
         const auto erisc_core_index = hal.get_programmable_core_type_index(this->get_kernel_programmable_core_type());
@@ -725,6 +747,17 @@ bool ComputeKernel::configure(
     const std::vector<const ll_api::memory*>& binaries =
         this->binaries(BuildEnvManager::get_instance().get_device_build_env(device->build_id()).build_key());
     for (int trisc_id = 0; trisc_id <= 2; trisc_id++) {
+        log_debug(
+            LogLoader,
+            "Compute kernel {} core {} base=0x{:x} offset[{}]=0x{:x} dest=0x{:x} text=0x{:x} size=0x{:x}",
+            this->name(),
+            logical_core.str(),
+            base_address,
+            2 + trisc_id,
+            offsets[2 + trisc_id],
+            base_address + offsets[2 + trisc_id],
+            static_cast<uint32_t>(binaries[trisc_id]->get_text_addr()),
+            binaries[trisc_id]->get_packed_size());
         llrt::write_binary_to_address(
             *binaries[trisc_id], device_id, worker_core, base_address + offsets[2 + trisc_id]);
     }

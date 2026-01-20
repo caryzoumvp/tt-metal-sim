@@ -8,6 +8,8 @@
 #include <string>
 #include <string_view>
 
+#include <tt-logger/tt-logger.hpp>
+
 #include "dev_mem_map.h"  // MEM_LOCAL_BASE
 #include "hal_types.hpp"
 #include "eth_l1_address_map.h"
@@ -302,7 +304,14 @@ void Hal::initialize_wh(bool is_base_routing_fw_enabled) {
             case DispatchFeature::ETH_MAILBOX_API: return false;
             case DispatchFeature::DISPATCH_ACTIVE_ETH_KERNEL_CONFIG_BUFFER: return false;
             case DispatchFeature::DISPATCH_IDLE_ETH_KERNEL_CONFIG_BUFFER: return true;
-            case DispatchFeature::DISPATCH_TENSIX_KERNEL_CONFIG_BUFFER: return true;
+            case DispatchFeature::DISPATCH_TENSIX_KERNEL_CONFIG_BUFFER: {
+                static bool logged = true;
+                if (!logged) {
+                    logged = true;
+                    log_debug(tt::LogMetal, "DISPATCH_TENSIX_KERNEL_CONFIG_BUFFER enabled");
+                }
+                return true;
+            }
             default: TT_THROW("Invalid Wormhole dispatch feature {}", static_cast<int>(feature));
         }
     };

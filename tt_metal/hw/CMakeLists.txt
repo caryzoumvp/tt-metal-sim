@@ -1,3 +1,4 @@
+cmake_minimum_required(VERSION 3.24...3.30)
 # Temporary workaround for Issue #8767
 set(ARCHS
     wormhole
@@ -22,6 +23,7 @@ set(TYPES
     kernel
 )
 
+set (TT_USE_SYSTEM_SFPI ON)
 # for wormhole, we need to generate two different linker scripts
 set(WH_LD_SCRIPTS
     kernel # base name
@@ -33,8 +35,8 @@ set(IRAM_OPTIONS
 )
 
 # determine sfpi version information
-set(SFPI_BASE "${PROJECT_SOURCE_DIR}/runtime")
-file(MAKE_DIRECTORY ${SFPI_BASE})
+set(SFPI_BASE "$ENV{HOME}/tools/")
+#file(MAKE_DIRECTORY ${SFPI_BASE})
 
 # sfpi-info.sh generates a cmake script, which we include just below.
 execute_process(
@@ -56,7 +58,7 @@ include(${SFPI_BASE}/sfpi-version.cmake)
 
 if(TT_USE_SYSTEM_SFPI)
     # we'll use the system's version
-    set(SFPI_BASE "/opt/tenstorrent")
+    set(SFPI_BASE "$ENV{HOME}/tools/")
 elseif(NOT "${SFPI_md5}" STREQUAL "")
     # download a toolchain
     include(FetchContent)
@@ -163,6 +165,7 @@ if(NOT TT_USE_SYSTEM_SFPI)
     endif()
 endif()
 
+#set(PROJECT_SOURCE_DIR "$ENV{HOME}/tensix/tt-metal/build_Debug/libexec/tt-metalium/tt_metal")
 foreach(ARCH IN LISTS ARCHS)
     if(ARCH STREQUAL "quasar")
         set(HW_VERSION_PATH "tt-2xx")
@@ -263,7 +266,8 @@ set(GPP_FLAGS_common
     -Os
     -fno-tree-loop-distribute-patterns
 )
-
+message("tt_metal hw CMAKE_CURRENT_SOURCE_DIR = ${CMAKE_CURRENT_SOURCE_DIR}")
+message("tt_metal hw HW_VERSION_PATH = ${HW_VERSION_PATH}")
 # We are going to build 5 or 6 object files foreach ARCH
 foreach(ARCH IN LISTS ARCHS)
     if(ARCH STREQUAL "quasar")

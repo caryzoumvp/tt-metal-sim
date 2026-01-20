@@ -165,6 +165,14 @@ void ConfigureKernelGroup(
     const auto& hal = MetalContext::instance().hal();
     uint32_t kernel_config_base =
         hal.get_dev_addr(hal.get_programmable_core_type(programmable_core_type_index), HalL1MemAddrType::KERNEL_CONFIG);
+    log_debug(
+        LogLoader,
+        "ConfigureKernelGroup: program_id={} core={} core_type_index={} base=0x{:x} kernels={}",
+        program.impl().get_id(),
+        logical_core.str(),
+        programmable_core_type_index,
+        kernel_config_base,
+        kernel_group ? kernel_group->kernel_ids.size() : 0);
     for (auto kernel_id : kernel_group->kernel_ids) {
         // Need the individual offsets of each bin
         // TODO: make configure take a std::span
@@ -791,6 +799,14 @@ bool ConfigureDeviceWithProgram(IDevice* device, Program& program, bool force_sl
         for (const auto& logical_core : logical_cores) {
             KernelGroup* kernel_group = program.impl().kernels_on_core(logical_core, index);
             CoreCoord physical_core = device->virtual_core_from_logical_core(logical_core, core_type);
+            log_debug(
+                LogLoader,
+                "ConfigureDeviceWithProgram: program_id={} logical_core={} physical_core={} core_type={} kernel_group={}",
+                program.impl().get_id(),
+                logical_core.str(),
+                physical_core.str(),
+                enchantum::to_string(core_type),
+                kernel_group ? "present" : "null");
             ConfigureKernelGroup(program, index, kernel_group, device, logical_core);
             // TODO: add support for CB for ethernet cores
             if (core_type == CoreType::WORKER) {

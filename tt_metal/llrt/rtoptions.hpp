@@ -38,6 +38,7 @@ inline std::once_flag g_root_once;
 // fine-grained control over targeted cores, chips, harts, etc.
 enum RunTimeDebugFeatures {
     RunTimeDebugFeatureDprint,
+    RunTimeDebugFeatureWatcher,
     RunTimeDebugFeatureReadDebugDelay,
     RunTimeDebugFeatureWriteDebugDelay,
     RunTimeDebugFeatureAtomicDebugDelay,
