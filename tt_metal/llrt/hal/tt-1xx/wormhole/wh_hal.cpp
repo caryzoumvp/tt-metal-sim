@@ -8,6 +8,8 @@
 #include <string>
 #include <string_view>
 
+#include <tt-logger/tt-logger.hpp>
+
 #include "dev_mem_map.h"  // MEM_LOCAL_BASE
 #include "hal_types.hpp"
 #include "eth_l1_address_map.h"

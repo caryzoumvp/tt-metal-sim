@@ -103,10 +103,9 @@ set(CMAKE_CXX_SCAN_FOR_MODULES FALSE)
 
 # Promote all IMPORTED targets discovered by find_package() to a GLOBAL scope
 set(CMAKE_FIND_PACKAGE_TARGETS_GLOBAL TRUE)
-
 # Reduce verbose "-- Up-to-date:" messages during install steps (e.g. cmake --install / target install)
 set(CMAKE_INSTALL_MESSAGE LAZY)
-
+set(ENABLE_DISTRIBUTED OFF)
 ############################################################################################################################
 # Project Options
 #   The following options and their defaults impact what artifacts get built
@@ -288,7 +287,7 @@ install(
         DESTINATION ${CMAKE_INSTALL_LIBDIR}
         COMPONENT tar
 )
-
+set(TT_USE_SYSTEM_SFPI ON)
 if(NOT TT_USE_SYSTEM_SFPI)
     # FIXME(17578): figure out what bits we actually need to ship and omit the rest
     install(
