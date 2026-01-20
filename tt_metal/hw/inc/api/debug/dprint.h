@@ -337,6 +337,7 @@ struct DebugPrintData {
 };
 
 __attribute__((__noinline__)) void debug_print(DebugPrinter& dp, DebugPrintData data) {
+#if defined(DEBUG_PRINT_ENABLED) && !defined(FORCE_DPRINT_OFF) && !defined(PROFILE_KERNEL)
     volatile tt_l1_ptr DebugPrintMemLayout* dprint_buffer = get_debug_print_buffer();
     if (dprint_buffer->aux.wpos == DEBUG_PRINT_SERVER_DISABLED_MAGIC) {
         // skip all prints if this hart+core was not specifically enabled on the host
@@ -430,6 +431,7 @@ __attribute__((__noinline__)) void debug_print(DebugPrinter& dp, DebugPrintData 
     // our message needs to be atomic w.r.t code, size and payload
     // so we only update wpos in the end
     dprint_buffer->aux.wpos = wpos;
+#endif
 }
 
 template <typename T>

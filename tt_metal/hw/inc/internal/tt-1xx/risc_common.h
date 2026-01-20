@@ -207,13 +207,15 @@ inline void risc_init() {
 inline void riscv_wait(uint32_t cycles) {
     volatile uint tt_reg_ptr* clock_lo = reinterpret_cast<volatile uint tt_reg_ptr*>(RISCV_DEBUG_REG_WALL_CLOCK_L);
     volatile uint tt_reg_ptr* clock_hi = reinterpret_cast<volatile uint tt_reg_ptr*>(RISCV_DEBUG_REG_WALL_CLOCK_H);
-    uint64_t wall_clock_timestamp = clock_lo[0] | ((uint64_t)clock_hi[0] << 32);
+    //uint64_t wall_clock_timestamp = clock_lo[0] | ((uint64_t)clock_hi[0] << 32);
+    uint64_t wall_clock_timestamp = 1;
     uint64_t wall_clock = 0;
     do {
 #if defined(COMPILE_FOR_ERISC)
         internal_::risc_context_switch();
 #endif
-        wall_clock = clock_lo[0] | ((uint64_t)clock_hi[0] << 32);
+        //wall_clock = clock_lo[0] | ((uint64_t)clock_hi[0] << 32);
+        wall_clock ++;
     } while (wall_clock < (wall_clock_timestamp + cycles));
 }
 

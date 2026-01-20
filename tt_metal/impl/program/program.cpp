@@ -744,6 +744,20 @@ CBHandle detail::ProgramImpl::add_circular_buffer_(const std::shared_ptr<Circula
         circular_buffer->assign_global_address();
     }
 
+    const auto& cb_config = circular_buffer->config();
+    const auto global_addr = cb_config.globally_allocated_address();
+    const bool has_global_config_addr = circular_buffer->is_global_circular_buffer();
+    const DeviceAddr global_config_addr =
+        has_global_config_addr ? circular_buffer->config_address() : DeviceAddr{0};
+    log_debug(
+        tt::LogMetal,
+        "Add circular buffer: id={} core_ranges={} total_size={} global_addr={} global_config_addr={}",
+        circular_buffer->id(),
+        circular_buffer->core_ranges().str(),
+        cb_config.total_size(),
+        global_addr.has_value() ? fmt::format("0x{:x}", global_addr.value()) : "n/a",
+        has_global_config_addr ? fmt::format("0x{:x}", global_config_addr) : "n/a");
+
     // Mark which buffer indices are being used on each core the circular buffer is used on
     for (const CoreRange& core_range : circular_buffer->core_ranges().ranges()) {
         for (auto x = core_range.start_coord.x; x <= core_range.end_coord.x; x++) {

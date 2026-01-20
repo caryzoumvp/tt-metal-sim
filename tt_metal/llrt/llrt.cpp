@@ -55,6 +55,30 @@ const ll_api::memory& get_risc_binary(
         if (update_callback) {
             update_callback(*mutable_ptr);
         }
+        const char* loading_str = "unknown";
+        switch (loading) {
+            case ll_api::memory::Loading::DISCRETE: loading_str = "DISCRETE"; break;
+            case ll_api::memory::Loading::CONTIGUOUS: loading_str = "CONTIGUOUS"; break;
+            case ll_api::memory::Loading::CONTIGUOUS_XIP: loading_str = "CONTIGUOUS_XIP"; break;
+        }
+        log_debug(
+            tt::LogLLRuntime,
+            "get_risc_binary path={} loading={} text_addr=0x{:x} text_size=0x{:x} packed_size=0x{:x} spans={}",
+            path,
+            loading_str,
+            mutable_ptr->get_text_addr(),
+            mutable_ptr->get_text_size(),
+            mutable_ptr->get_packed_size(),
+            mutable_ptr->num_spans());
+        mutable_ptr->process_spans(
+            [&](std::vector<uint32_t>::const_iterator, uint64_t addr, uint32_t len_words) {
+                log_debug(
+                    tt::LogLLRuntime,
+                    "get_risc_binary span addr=0x{:x} len_words=0x{:x} len_bytes=0x{:x}",
+                    static_cast<uint64_t>(addr),
+                    static_cast<uint32_t>(len_words),
+                    static_cast<uint32_t>(len_words * sizeof(uint32_t)));
+            });
 
         lock.lock();
         // maps have iterator stability, so SLOT is still valid.
@@ -239,6 +263,11 @@ bool test_load_multicast_write_risc_binary(
 void write_binary_to_address(const ll_api::memory& mem, tt::ChipId chip_id, const CoreCoord& core, uint32_t address) {
     log_debug(tt::LogLLRuntime, "vec size = {}, size_in_bytes = {}", mem.size(), mem.size() * sizeof(uint32_t));
     mem.process_spans([&](std::vector<uint32_t>::const_iterator mem_ptr, uint64_t /*addr*/, uint32_t len_words) {
+        log_debug(
+            tt::LogLLRuntime,
+            "write_binary_to_address dest l1 addr=0x{:x} size_bytes={}",
+            address,
+            len_words * sizeof(uint32_t));
         tt::tt_metal::MetalContext::instance().get_cluster().write_core(
             &*mem_ptr, len_words * sizeof(uint32_t), tt_cxy_pair(chip_id, core), address);
     });
@@ -349,7 +378,7 @@ void wait_until_cores_done(
         if (loop_count % 1000 == 0) {
             log_debug(
                 tt::LogMetal, "Device {}: Not done phys cores: {}", device_id, fmt::join(not_done_phys_cores, " "));
-            usleep(100000);
+            usleep(1000000);
         }
 #endif
 

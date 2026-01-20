@@ -88,6 +88,7 @@ tt::tt_metal::ClusterType Cluster::get_cluster_type_from_cluster_desc(
             tt::umd::SimulationChip::get_soc_descriptor_path_from_simulator_path(rtoptions.get_simulator_path());
         auto arch = tt::umd::SocDescriptor::get_arch_from_soc_descriptor_path(soc_desc);
         if (arch == tt::ARCH::WORMHOLE_B0) {
+            log_info(tt::LogDevice, "use SIMULATOR_WORMHOLE_B0");
             return tt::tt_metal::ClusterType::SIMULATOR_WORMHOLE_B0;
         }
         if (arch == tt::ARCH::BLACKHOLE) {
@@ -372,8 +373,10 @@ void Cluster::assign_mem_channels_to_devices(
 
 void Cluster::get_metal_desc_from_tt_desc() {
     for (const auto& id : this->driver_->get_target_device_ids()) {
-        this->sdesc_per_chip_.emplace(
-            id, metal_SocDescriptor(this->driver_->get_soc_descriptor(id), this->cluster_desc_->get_board_type(id)));
+        auto d = this->driver_->get_soc_descriptor(id);
+        auto t =  this->cluster_desc_->get_board_type(id);
+        auto desc = metal_SocDescriptor( d ,t);
+        this->sdesc_per_chip_.emplace(id, desc);
     }
 }
 
@@ -414,6 +417,7 @@ void Cluster::open_driver(const bool& /*skip_driver_allocs*/) {
                 .target_devices = {0},
                 .simulator_directory = rtoptions_.get_simulator_path(),
             });
+            log_info(tt::LogDevice, "create simulator device success!");
         }
     } else if (this->target_type_ == TargetDevice::Mock) {
         // If a cluster descriptor was not provided via constructor, and mock is enabled via rtoptions,
@@ -437,6 +441,7 @@ void Cluster::open_driver(const bool& /*skip_driver_allocs*/) {
     device_driver->set_barrier_address_params(barrier_params);
 
     this->driver_ = std::move(device_driver);
+    log_info(tt::LogDevice, "exit open driver !");
 }
 
 void Cluster::start_driver(umd::DeviceParams& device_params) const {
