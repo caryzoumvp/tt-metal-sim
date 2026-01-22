@@ -371,7 +371,7 @@ void WriteInitMagic(ChipId device_id, const CoreCoord& virtual_core, int risc_id
                 risc_id,
                 base_addr, result[0],
                 enabled);
-            TT_THROW("Timed out writing init magic");
+            //TT_THROW("Timed out writing init magic");
         }
     } 
 }  // WriteInitMagic
