@@ -142,13 +142,13 @@ void WriteInitMagic(ChipId device_id, const CoreCoord& virtual_core, int risc_id
             return;
         }
         if ((num_tries == 0) && (tt::tt_metal::MetalContext::instance().rtoptions().get_simulator_enabled())) {
-            log_warning(
-                tt::LogMetal,
-                "Timed out writing init magic on simulator for core {} risc {} (base addr 0x{:x} result 0x{:x} enabled={})",
-                virtual_core.str(),
-                risc_id,
-                base_addr, result[0],
-                enabled);
+            // log_warning(
+            //     tt::LogMetal,
+            //     "Timed out writing init magic on simulator for core {} risc {} (base addr 0x{:x} result 0x{:x} enabled={})",
+            //     virtual_core.str(),
+            //     risc_id,
+            //     base_addr, result[0],
+            //     enabled);
             //TT_THROW("Timed out writing init magic");
         }
     } 
