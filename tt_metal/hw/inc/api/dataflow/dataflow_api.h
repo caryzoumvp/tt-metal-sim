@@ -17,8 +17,6 @@
 #include <tuple>
 #include <utility>
 #include <type_traits>
-#include "dev_msgs.h"
-
 #include "internal/dataflow/dataflow_api_addrgen.h"
 #include "core_config.h"
 #include "internal/circular_buffer_interface.h"

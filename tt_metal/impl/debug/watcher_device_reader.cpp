@@ -591,7 +591,10 @@ void WatcherDeviceReader::Core::Dump() const {
                 dev_msgs_factory_.offset_of<dev_msgs::watcher_msg_t>(dev_msgs::watcher_msg_t::Field::enable);
             uint32_t value = dev_msgs::WatcherDisabled;
             tt::tt_metal::MetalContext::instance().get_cluster().write_core(
-                &value, sizeof(value), {device_id_, virtual_coord_}, mailbox_addr + watcher_offset);
+                &value,
+                sizeof(value),
+                {static_cast<size_t>(device_id_), virtual_coord_},
+                mailbox_addr + watcher_offset);
             log_warning(
                 tt::LogMetal,
                 "Watcher read invalid watcher.enable on {} (value {}). Initialized to disabled for simulator.",

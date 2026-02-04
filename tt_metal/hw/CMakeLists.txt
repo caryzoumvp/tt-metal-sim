@@ -40,7 +40,7 @@ set(IRAM_OPTIONS
 )
 
 # determine sfpi version information
-set(SFPI_BASE "$ENV{HOME}/tools/")
+set(SFPI_BASE "/opt/tenstorrent")
 #file(MAKE_DIRECTORY ${SFPI_BASE})
 
 # sfpi-info.sh generates a cmake script, which we include just below.
@@ -65,7 +65,7 @@ if(TT_USE_SYSTEM_SFPI)
     # we'll use the system's version
     set(SFPI_BASE "/opt/tenstorrent")
 elseif(NOT "${SFPI_hash}" STREQUAL "")
-    set(SFPI_BASE "$ENV{HOME}/tools/")
+    set(SFPI_BASE "/workspaces/tensix/sfpi/build/")
 elseif(NOT "${SFPI_hash}" STREQUAL "")
     # download a toolchain
     include(FetchContent)
