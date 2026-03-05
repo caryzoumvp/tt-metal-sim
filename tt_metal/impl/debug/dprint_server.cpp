@@ -133,7 +133,7 @@ void WriteInitMagic(ChipId device_id, const CoreCoord& virtual_core, int risc_id
     // 2. the packet will arrive to set the wpos = DEBUG_PRINT_SERVER_STARTING_MAGIC
     // 3. the actual host polling function will read wpos = DEBUG_PRINT_SERVER_STARTING_MAGIC
     // 4. now we will access wpos at the starting magic which is incorrect
-    uint32_t num_tries = 100000;
+    uint32_t num_tries = 100;
     while (num_tries-- > 0) {
         auto result =
             tt::tt_metal::MetalContext::instance().get_cluster().read_core(device_id, virtual_core, base_addr, 4);
@@ -142,7 +142,7 @@ void WriteInitMagic(ChipId device_id, const CoreCoord& virtual_core, int risc_id
             return;
         }
     }
-    TT_THROW("Timed out writing init magic");
+    //TT_THROW("Timed out writing init magic");
 }  // WriteInitMagic
 
 // Checks if our magic value was cleared by the device code

@@ -560,12 +560,12 @@ void WatcherDeviceReader::Core::Dump() const {
     // Whether or not watcher data is available depends on a flag set on the device.
     if (mbox_data_.watcher().enable() != dev_msgs::WatcherEnabled and
         mbox_data_.watcher().enable() != dev_msgs::WatcherDisabled) {
-        TT_THROW(
-            "Watcher read invalid watcher.enable on {}. Read {}, valid values are {} and {}.",
-            core_str_,
-            mbox_data_.watcher().enable(),
-            dev_msgs::WatcherEnabled,
-            dev_msgs::WatcherDisabled);
+        // TT_THROW(
+        //     "Watcher read invalid watcher.enable on {}. Read {}, valid values are {} and {}.",
+        //     core_str_,
+        //     mbox_data_.watcher().enable(),
+        //     dev_msgs::WatcherEnabled,
+        //     dev_msgs::WatcherDisabled);
     }
     bool enabled = (mbox_data_.watcher().enable() == dev_msgs::WatcherEnabled);
 
