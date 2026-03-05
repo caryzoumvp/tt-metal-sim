@@ -8,7 +8,10 @@
 #include <functional>
 #include <random>
 #include <vector>
+#include <cstring>
+#if defined(__AVX2__)
 #include <simde/x86/avx2.h>
+#endif
 
 #include <tt_stl/assert.hpp>
 #include "blockfloat_common.hpp"
@@ -57,7 +60,8 @@ template std::vector<uint32_t> pack_as_bfp8_tiles<uint16_t>(
     bool is_exp_a,
     const std::optional<tt::tt_metal::Tile>& tile);
 
-std::vector<float> unpack_bfp8_tiles_into_float_vec(
+#if defined(__AVX2__)
+__attribute__((target("avx2"))) static std::vector<float> unpack_bfp8_tiles_into_float_vec_avx2(
     tt::stl::Span<const uint32_t> bfp8_tiles,
     bool row_major_output,
     bool is_exp_a,
@@ -217,4 +221,158 @@ std::vector<float> unpack_bfp8_tiles_into_float_vec(
         }
     }
     return float_vec;
+}
+
+
+#endif
+
+namespace {
+static inline uint32_t bfp8_to_fp32_bits(uint8_t bfp8, uint32_t exp, bool is_exp_a) {
+    uint32_t sign = (bfp8 >> 7) & 0x1u;
+    uint32_t man = bfp8 & 0x7fu;
+    if (man == 0) {
+        return sign << 31;
+    }
+
+    uint32_t man_shifted = man;
+    uint32_t shift_cnt = 0;
+    for (uint32_t shift_val = 0; shift_val < 7; ++shift_val) {
+        if (man_shifted >= 0x40u) {
+            break;
+        }
+        man_shifted <<= 1;
+        shift_cnt = shift_val + 1;
+    }
+    man_shifted = (man_shifted << 1) & 0x7fu;
+
+    if (shift_cnt > exp) {
+        return 0u;
+    }
+
+    int32_t rebias = is_exp_a ? -112 : 0;
+    int32_t exp_adj = static_cast<int32_t>(exp) - (rebias + static_cast<int32_t>(shift_cnt));
+    uint32_t bits = (sign << 31) | (static_cast<uint32_t>(exp_adj) << 23) | (man_shifted << 16);
+    return bits;
+}
+
+static inline float bfp8_to_float(uint8_t bfp8, uint32_t exp, bool is_exp_a) {
+    uint32_t bits = bfp8_to_fp32_bits(bfp8, exp, is_exp_a);
+    float f;
+    std::memcpy(&f, &bits, sizeof(f));
+    return f;
+}
+}  // namespace
+
+
+static std::vector<float> unpack_bfp8_tiles_into_float_vec_scalar(
+    tt::stl::Span<const uint32_t> bfp8_tiles,
+    bool row_major_output,
+    bool is_exp_a,
+    const std::optional<tt::tt_metal::Tile>& tile) {
+    ZoneScoped;
+
+    uint32_t l1_alignment = tt::tt_metal::MetalContext::instance().hal().get_alignment(tt::tt_metal::HalMemType::L1);
+
+    auto tile_H = tile.has_value() ? tile->get_tile_shape()[0] : tt::constants::TILE_HEIGHT;
+    auto tile_W = tile.has_value() ? tile->get_tile_shape()[1] : tt::constants::TILE_WIDTH;
+    auto face_H = tile.has_value() ? tile->get_face_shape()[0] : tt::constants::FACE_HEIGHT;
+    auto face_W = tile.has_value() ? tile->get_face_shape()[1] : tt::constants::FACE_WIDTH;
+    auto tile_HW = tile_H * tile_W;
+    auto face_HW = face_H * face_W;
+    auto num_faces = tile_HW / face_HW;
+    auto subtiles_in_tile_row = tile_H / face_H;
+    auto subtiles_in_tile_col = tile_W / face_W;
+    auto subtile_rows = face_H;
+    auto subtile_cols = face_W;
+    uint32_t num_exp_words = tt::round_up(num_faces * face_H, l1_alignment) / 4;
+    uint32_t num_tile_words = tile_HW / 4;
+    uint32_t num_bfp8_in_tile = num_tile_words + num_exp_words;
+
+    uint32_t exp_bit_mask;
+    if (tile_HW == 16) {
+        exp_bit_mask = 0x0;
+    } else if (tile_HW == 32) {
+        exp_bit_mask = 0x1;
+    } else {
+        exp_bit_mask = 0x3;
+    }
+
+    int num_elements_in_dword = 4;
+    uint32_t size_bytes = bfp8_tiles.size() * num_elements_in_dword;
+    uint32_t single_bfp8_tile_size =
+        tile.has_value() ? tile->get_tile_size(tt::DataFormat::Bfp8_b) : tile_size(tt::DataFormat::Bfp8_b);
+    TT_ASSERT(size_bytes % single_bfp8_tile_size == 0);
+    uint32_t num_tiles = size_bytes / single_bfp8_tile_size;
+
+    int data_index;
+    int subtile_r;
+    int subtile_c;
+    uint32_t exp_word, sub_word_index;
+
+    uint32_t num_float_in_tile = subtiles_in_tile_row * subtiles_in_tile_col * subtile_rows * subtile_cols;
+    uint32_t fp32_element_index = 0;
+    std::vector<float> float_vec;
+    float_vec.resize(num_tiles * num_float_in_tile);
+    for (int tile_index = 0; tile_index < static_cast<int>(num_tiles); ++tile_index) {
+        for (int tr = 0; tr < subtiles_in_tile_row; ++tr) {
+            for (int tc = 0; tc < subtiles_in_tile_col; ++tc) {
+                for (int i = 0; i < subtile_rows; ++i) {
+                    subtile_r = tr * face_H + i;
+                    for (int j = 0; j < subtile_cols; j += 8) {
+                        subtile_c = tc * face_W + j;
+                        data_index =
+                            (tr * (subtiles_in_tile_col * face_HW / 4) + tc * (face_HW / 4) + i * (face_W / 4) +
+                             j / 4);
+                        int tile_and_data_index = data_index + (num_bfp8_in_tile * tile_index);
+
+                        int exponent_index = (data_index >> 4) + (num_bfp8_in_tile * tile_index);
+                        exp_word = bfp8_tiles[exponent_index];
+
+                        int num_exponent_words_skip = tile_index * num_exp_words;
+                        sub_word_index = ((tile_and_data_index - num_exponent_words_skip) >> 2) & exp_bit_mask;
+                        uint32_t exp = get_byte(exp_word, sub_word_index);
+
+                        uint32_t first_val = bfp8_tiles[num_exp_words + tile_and_data_index];
+                        uint32_t second_val = bfp8_tiles[num_exp_words + tile_and_data_index + 1];
+
+                        uint32_t float_data_index;
+                        if (row_major_output) {
+                            float_data_index = subtile_c + (tile_W * subtile_r) + (tile_index * num_float_in_tile);
+                        } else {
+                            float_data_index = fp32_element_index;
+                            fp32_element_index += 8;
+                        }
+
+                        for (int k = 0; k < 4; ++k) {
+                            uint8_t bfp8 = static_cast<uint8_t>((first_val >> (k * 8)) & 0xFFu);
+                            float_vec[float_data_index + k] = bfp8_to_float(bfp8, exp, is_exp_a);
+                        }
+                        for (int k = 0; k < 4; ++k) {
+                            uint8_t bfp8 = static_cast<uint8_t>((second_val >> (k * 8)) & 0xFFu);
+                            float_vec[float_data_index + num_elements_in_dword + k] = bfp8_to_float(bfp8, exp, is_exp_a);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return float_vec;
+}
+
+std::vector<float> unpack_bfp8_tiles_into_float_vec(
+    tt::stl::Span<const uint32_t> bfp8_tiles,
+    bool row_major_output,
+    bool is_exp_a,
+    const std::optional<tt::tt_metal::Tile>& tile) {
+#if defined(__x86_64__) || defined(__i386__)
+#if defined(__GNUC__) || defined(__clang__)
+    __builtin_cpu_init();
+#if defined(__AVX2__)
+    if (__builtin_cpu_supports("avx2")) {
+        return unpack_bfp8_tiles_into_float_vec_avx2(bfp8_tiles, row_major_output, is_exp_a, tile);
+    }
+#endif
+#endif
+#endif
+    return unpack_bfp8_tiles_into_float_vec_scalar(bfp8_tiles, row_major_output, is_exp_a, tile);
 }

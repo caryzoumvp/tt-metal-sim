@@ -34,6 +34,7 @@ project(
         C # Some of the jit-build files are plain C
         CXX
 )
+set(TT_X86_64_MARCH "x86-64-v3" CACHE STRING "x86-64 -march value (empty to disable)")
 message(STATUS "Metalium version: ${PROJECT_VERSION}")
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 
@@ -164,7 +165,7 @@ target_link_libraries(
 )
 
 add_compile_options(
-    "$<$<STREQUAL:${CMAKE_SYSTEM_PROCESSOR},x86_64>:-march=x86-64-v3>"
+    "$<$<AND:$<STREQUAL:${CMAKE_SYSTEM_PROCESSOR},x86_64>,$<BOOL:${TT_X86_64_MARCH}>>:-march=${TT_X86_64_MARCH}>"
     -fPIC
     -pipe # use pipes instead of tmp files
     -fvisibility-inlines-hidden

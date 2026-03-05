@@ -56,7 +56,7 @@ show_help() {
 
 clean() {
     echo "INFO: Removing build artifacts!"
-    rm -rf build_Release* build_Debug* build_RelWithDebInfo* build_ASan* build_TSan* build_CodeCoverage* build_ASanCoverage build built .cpmcache
+    rm -rf build_Release* build_Debug* build_RelWithDebInfo* build_ASan* build_TSan* build_CodeCoverage* build_ASanCoverage build built
     rm -rf ~/.cache/tt-metal-cache /tmp/tt-metal-cache
     if [[ ! -z $TT_METAL_CACHE ]]; then
         echo "User has TT_METAL_CACHE set, please make sure you delete it in order to delete all artifacts!"
@@ -87,6 +87,9 @@ cpm_source_cache=""
 c_compiler_path=""
 ttnn_shared_sub_libs="OFF"
 toolchain_path="cmake/x86_64-linux-clang-20-libstdcpp-toolchain.cmake"
+
+TT_X86_64_MARCH_DEFAULT="${TT_X86_64_MARCH_DEFAULT:-x86-64-v2}"
+TT_X86_64_MARCH="${TT_X86_64_MARCH:-$TT_X86_64_MARCH_DEFAULT}"
 
 
 configure_only="OFF"
@@ -417,6 +420,7 @@ fi
 if [ "$cxx_compiler_path" == "" ]; then
     echo "INFO: CMAKE_TOOLCHAIN_FILE: $toolchain_path"
     cmake_args+=("-DCMAKE_TOOLCHAIN_FILE=${toolchain_path}")
+    cmake_args+=("-DTT_X86_64_MARCH=${TT_X86_64_MARCH}")
 fi
 
 echo "INFO: Configuring Project"
