@@ -20,3 +20,4 @@ unset LD_LIBRARY_PATH
 export LD_LIBRARY_PATH=/workspaces/tensix/tt-metal/build_Debug/lib:/workspaces/tensix/tt-metal/build_Debug/ttnn:/workspaces/tensix/tt-metal/build_Debug/tt_metal:${LD_LIBRARY_PATH:-}
 #unset TT_UMD_TTSIM_SLOW_PATH
 #unset TT_METAL_SLOW_DISPATCH_MODE
+unset TT_METAL_WATCHER //unset watcher, wather will enble noc saniter check, this will slow down performance significatlly
