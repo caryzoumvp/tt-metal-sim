@@ -17,8 +17,8 @@ from models.demos.isaac_gr00t.demo.gr00t import run_ttnn_decoder_projection
 @pytest.mark.parametrize(
     "batch, action_horizon",
     [
-        (1, 1),
-        (1, 2),
+        (1,1),
+        (1,2),
     ],
 )
 def test_ttnn_decoder_projection_small_repro(batch, action_horizon, device):
