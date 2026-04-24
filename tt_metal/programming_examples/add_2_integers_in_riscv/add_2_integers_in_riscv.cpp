@@ -111,7 +111,7 @@ int main() {
     // Add the program to the workload and enqueue it for execution on the MeshDevice.
     // Setting blocking=false returns immediately; commands on the queue execute in FIFO order.
     workload.add_program(device_range, std::move(program));
-    distributed::EnqueueMeshWorkload(cq, workload, /*blocking=*/false);
+    distributed::EnqueueMeshWorkload(cq, workload, /*blocking=*/true);
 
     // Read a shard of the destination MeshBuffer back to host.
     // ReadShard reads from a specific device identified by MeshCoordinate; the last argument controls blocking.

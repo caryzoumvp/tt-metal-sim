@@ -10,10 +10,11 @@ void kernel_main() {
     // Make sure to export TT_METAL_DPRINT_CORES=0,0 before runtime.
 
     // Copy float from device DRAM into the core's SRAM
-    uint32_t dram_addr = get_arg_val<uint32_t>(0);
-    uint64_t noc_addr = get_noc_addr(1, 0, dram_addr);
     constexpr uint32_t cb_id = tt::CBIndex::c_0;  // index=0
     uint32_t size = get_tile_size(cb_id);
+    uint32_t dram_addr = get_arg_val<uint32_t>(0);
+    InterleavedAddrGen<true> dram = {.bank_base_address = dram_addr, .page_size = size};
+    uint64_t noc_addr = get_noc_addr(0, dram);
     uint32_t l1_addr = get_write_ptr(cb_id);
     cb_reserve_back(cb_id, 0);
     noc_async_read(noc_addr, l1_addr, size);

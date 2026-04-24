@@ -114,7 +114,7 @@ int main() {
         // Add the program to the workload for the mesh.
         workload.add_program(device_range, std::move(program));
         // Enqueue the workload for execution on the mesh (non-blocking) and wait for completion before reading back.
-        distributed::EnqueueMeshWorkload(cq, workload, /*blocking=*/false);
+        distributed::EnqueueMeshWorkload(cq, workload, /*blocking=*/true);
         distributed::Finish(cq);
         // NOTE: The above is equivalent to a blocking enqueue of the workload.
 

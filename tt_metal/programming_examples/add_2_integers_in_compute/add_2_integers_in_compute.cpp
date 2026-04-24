@@ -148,7 +148,7 @@ int main() {
 
     // Add the program to the workload and execute it.
     workload.add_program(device_range, std::move(program));
-    distributed::EnqueueMeshWorkload(cq, workload, false);
+    distributed::EnqueueMeshWorkload(cq, workload, true);
     distributed::Finish(cq);
 
     // Data can be read from a MeshBuffer using the ReadShard function. This function is used to read data from a
