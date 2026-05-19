@@ -75,6 +75,27 @@ def _build_system1_inputs_from_shared(shared_inputs: dict[str, np.ndarray]) -> d
     return backbone_inputs
 
 
+def _timed_upload(t_bf16: torch.Tensor, device: ttnn.Device, *, label: str) -> ttnn.Tensor:
+    """Upload a bfloat16 torch tensor to device, printing per-phase timing."""
+    nbytes = t_bf16.numel() * 2
+    t0 = perf_counter_ns()
+    t_host = ttnn.from_torch(t_bf16, layout=ttnn.TILE_LAYOUT)
+    t1 = perf_counter_ns()
+    t_dev = ttnn.to_device(t_host, device)
+    t2 = perf_counter_ns()
+    tilize_ms = (t1 - t0) / 1e6
+    upload_ms = (t2 - t1) / 1e6
+    total_ms  = (t2 - t0) / 1e6
+    mb = nbytes / 1e6
+    bw = mb / (upload_ms / 1e3) if upload_ms > 0 else float("inf")
+    print(
+        f"[upload] {label:60s} shape={tuple(t_bf16.shape)}  {mb:6.1f} MB"
+        f"  tilize={tilize_ms:7.1f} ms  device={upload_ms:7.1f} ms"
+        f"  total={total_ms:7.1f} ms  bw={bw:6.0f} MB/s"
+    )
+    return t_dev
+
+
 class TtGr00tSystem1BackboneRuntime:
     """System1 backbone runtime that routes Linear ops through TTNN."""
 
@@ -125,33 +146,40 @@ class TtGr00tSystem1BackboneRuntime:
         out = ttnn.to_torch(y).to(torch.float32).cpu().numpy()
         return out[:m, :].astype(np.float32)
 
+    def _timed_upload(self, t_bf16: torch.Tensor, *, label: str) -> ttnn.Tensor:
+        return _timed_upload(t_bf16, self.device, label=label)
+
     def _patch_backbone_linears(self) -> dict[str, Any]:
         originals: dict[str, Any] = {}
         backbone = self.policy.model.backbone
+        total_bytes = 0
+        t_patch_start = perf_counter_ns()
         for module_name, module in backbone.named_modules():
             if not isinstance(module, torch.nn.Linear):
                 continue
             originals[module_name] = module.forward
+
+            t_np0 = perf_counter_ns()
             weight_io = module.weight.detach().cpu().to(torch.float32).T.numpy().astype(np.float32)
             bias_np = (
                 module.bias.detach().cpu().to(torch.float32).numpy().astype(np.float32)
                 if module.bias is not None
                 else None
             )
-            weight_tt = ttnn.from_torch(
-                torch.from_numpy(weight_io).to(torch.bfloat16),
-                layout=ttnn.TILE_LAYOUT,
-                device=self.device,
+            t_bf16_w = torch.from_numpy(weight_io).to(torch.bfloat16)
+            t_np1 = perf_counter_ns()
+            print(
+                f"[upload-prep] {module_name:55s} weight={tuple(t_bf16_w.shape)}"
+                f"  numpy+cast={(t_np1-t_np0)/1e6:.1f} ms"
             )
-            bias_tt = (
-                ttnn.from_torch(
-                    torch.from_numpy(bias_np.reshape(1, -1)).to(torch.bfloat16),
-                    layout=ttnn.TILE_LAYOUT,
-                    device=self.device,
-                )
-                if bias_np is not None
-                else None
-            )
+
+            weight_tt = self._timed_upload(t_bf16_w, label=f"backbone.{module_name}.weight")
+            total_bytes += t_bf16_w.numel() * 2
+            bias_tt = None
+            if bias_np is not None:
+                t_bf16_b = torch.from_numpy(bias_np.reshape(1, -1)).to(torch.bfloat16)
+                bias_tt = self._timed_upload(t_bf16_b, label=f"backbone.{module_name}.bias")
+                total_bytes += t_bf16_b.numel() * 2
 
             def _patched_forward(self_mod, input_tensor, _wtt=weight_tt, _btt=bias_tt):
                 x_np = input_tensor.detach().cpu().to(torch.float32).numpy().astype(np.float32)
@@ -164,6 +192,13 @@ class TtGr00tSystem1BackboneRuntime:
                 return out
 
             module.forward = types.MethodType(_patched_forward, module)
+
+        t_patch_total = (perf_counter_ns() - t_patch_start) / 1e3
+        print(
+            f"[upload-summary] backbone patched {len(originals)} Linear layers"
+            f"  total_data={total_bytes/1e6:.1f} MB"
+            f"  wall={t_patch_total/1e6:.1f} ms"
+        )
         return originals
 
     def _restore_backbone_linears(self, originals: dict[str, Any]) -> None:
@@ -394,19 +429,19 @@ class TtGr00tActionHeadRuntime:
 
     def _weight_to_tt(self, name: str, weight_io: np.ndarray):
         if name not in self._tt_weight_cache:
-            self._tt_weight_cache[name] = ttnn.from_torch(
+            self._tt_weight_cache[name] = _timed_upload(
                 torch.from_numpy(weight_io).to(torch.bfloat16),
-                layout=ttnn.TILE_LAYOUT,
-                device=self.device,
+                self.device,
+                label=f"action.{name}",
             )
         return self._tt_weight_cache[name]
 
     def _bias_to_tt(self, name: str, bias: np.ndarray):
         if name not in self._tt_bias_cache:
-            self._tt_bias_cache[name] = ttnn.from_torch(
+            self._tt_bias_cache[name] = _timed_upload(
                 torch.from_numpy(bias.reshape(1, -1)).to(torch.bfloat16),
-                layout=ttnn.TILE_LAYOUT,
-                device=self.device,
+                self.device,
+                label=f"action.{name}",
             )
         return self._tt_bias_cache[name]
 
@@ -448,11 +483,29 @@ class TtGr00tActionHeadRuntime:
             raise RuntimeError(f"TTNN op failed at {op_name}") from exc
 
     def _linear_lastdim(
-        self, x: np.ndarray, weight_io: np.ndarray, bias: np.ndarray | None, *, op_name: str
-    ) -> np.ndarray:
-        x2d = x.reshape(-1, x.shape[-1]).astype(np.float32)
-        y2d = self._ttnn_linear_2d(x2d, weight_io.astype(np.float32), bias, op_name=op_name)
-        return y2d.reshape(*x.shape[:-1], y2d.shape[-1]).astype(np.float32)
+        self, x: Any, weight_io: np.ndarray, bias: np.ndarray | None, *, op_name: str
+    ) -> ttnn.Tensor:
+        shape = tuple(x.shape)
+        in_dim = shape[-1]
+        w = weight_io.astype(np.float32)
+        if w.shape[0] != in_dim:
+            if w.shape[1] == in_dim:
+                w = w.T
+            else:
+                raise ValueError(f"{op_name}: weight/input mismatch x_in={in_dim} weight={w.shape}")
+        x_tt = self._ensure_tt(x, op_name=op_name)
+        if len(shape) > 2:
+            m = 1
+            for d in shape[:-1]:
+                m *= int(d)
+            x_tt = ttnn.reshape(x_tt, (m, in_dim))
+        y_tt = ttnn.matmul(x_tt, self._weight_to_tt(op_name, w))
+        if bias is not None:
+            y_tt = ttnn.add(y_tt, self._bias_to_tt(f"{op_name}.b", bias.astype(np.float32)))
+        if len(shape) > 2:
+            out_dim = int(tuple(y_tt.shape)[-1])
+            y_tt = ttnn.reshape(y_tt, shape[:-1] + (out_dim,))
+        return y_tt
 
     def _to_tt(self, x: np.ndarray, *, op_name: str) -> ttnn.Tensor:
         if self.device is None:
@@ -465,128 +518,118 @@ class TtGr00tActionHeadRuntime:
     def _to_np(self, x: ttnn.Tensor) -> np.ndarray:
         return ttnn.to_torch(x).to(torch.float32).cpu().numpy().astype(np.float32)
 
-    def _tt_unary(self, x: np.ndarray, op_fn: Any, *, op_name: str) -> np.ndarray:
-        tx = self._to_tt(x.astype(np.float32), op_name=op_name)
-        ty = op_fn(tx)
-        return self._to_np(ty)
+    def _ensure_tt(self, x: Any, *, op_name: str) -> ttnn.Tensor:
+        """Return x on device; upload from numpy/torch if not already a ttnn.Tensor."""
+        if isinstance(x, ttnn.Tensor):
+            return x
+        return self._to_tt(np.asarray(x, dtype=np.float32), op_name=op_name)
 
-    def _tt_binary(self, x: np.ndarray, y: np.ndarray, op_fn: Any, *, op_name: str) -> np.ndarray:
-        tx = self._to_tt(x.astype(np.float32), op_name=f"{op_name}.lhs")
-        ty = self._to_tt(y.astype(np.float32), op_name=f"{op_name}.rhs")
-        tz = op_fn(tx, ty)
-        return self._to_np(tz)
+    def _tt_unary(self, x: Any, op_fn: Any, *, op_name: str) -> ttnn.Tensor:
+        return op_fn(self._ensure_tt(x, op_name=op_name))
 
-    def _tt_mul_scalar(self, x: np.ndarray, scalar: float, *, op_name: str) -> np.ndarray:
-        tx = self._to_tt(x.astype(np.float32), op_name=op_name)
-        ty = ttnn.multiply(tx, np.float32(scalar))
-        return self._to_np(ty)
+    def _tt_binary(self, x: Any, y: Any, op_fn: Any, *, op_name: str) -> ttnn.Tensor:
+        tx = self._ensure_tt(x, op_name=f"{op_name}.lhs")
+        ty = self._ensure_tt(y, op_name=f"{op_name}.rhs")
+        return op_fn(tx, ty)
 
-    def _tt_silu(self, x: np.ndarray, *, op_name: str) -> np.ndarray:
+    def _tt_mul_scalar(self, x: Any, scalar: float, *, op_name: str) -> ttnn.Tensor:
+        return ttnn.multiply(self._ensure_tt(x, op_name=op_name), np.float32(scalar))
+
+    def _tt_silu(self, x: Any, *, op_name: str) -> ttnn.Tensor:
         return self._tt_unary(x, ttnn.silu, op_name=op_name)
 
-    def _tt_relu(self, x: np.ndarray, *, op_name: str) -> np.ndarray:
+    def _tt_relu(self, x: Any, *, op_name: str) -> ttnn.Tensor:
         return self._tt_unary(x, ttnn.relu, op_name=op_name)
 
-    def _tt_gelu(self, x: np.ndarray, *, op_name: str) -> np.ndarray:
+    def _tt_gelu(self, x: Any, *, op_name: str) -> ttnn.Tensor:
         return self._tt_unary(x, ttnn.gelu, op_name=op_name)
 
-    def _tt_add(self, x: np.ndarray, y: np.ndarray, *, op_name: str) -> np.ndarray:
+    def _tt_add(self, x: Any, y: Any, *, op_name: str) -> ttnn.Tensor:
         return self._tt_binary(x, y, ttnn.add, op_name=op_name)
 
-    def _tt_mul(self, x: np.ndarray, y: np.ndarray, *, op_name: str) -> np.ndarray:
+    def _tt_mul(self, x: Any, y: Any, *, op_name: str) -> ttnn.Tensor:
         return self._tt_binary(x, y, ttnn.multiply, op_name=op_name)
 
-    def _tt_repeat(self, x: np.ndarray, repeats: list[int], *, op_name: str) -> np.ndarray:
-        tx = self._to_tt(x.astype(np.float32), op_name=op_name)
-        ty = ttnn.repeat(tx, repeats)
-        return self._to_np(ty)
+    def _tt_repeat(self, x: Any, repeats: list[int], *, op_name: str) -> ttnn.Tensor:
+        return ttnn.repeat(self._ensure_tt(x, op_name=op_name), repeats)
 
-    def _tt_bcast_h(self, x: np.ndarray, y: np.ndarray, *, math_op: Any, op_name: str) -> np.ndarray:
-        y_work = y.astype(np.float32)
-        if y_work.ndim == x.ndim - 1:
-            y_work = np.expand_dims(y_work, axis=-2)
-        if y_work.ndim != x.ndim:
-            raise ValueError(f"{op_name}: rhs rank mismatch lhs={x.ndim}, rhs={y_work.ndim}")
-        if y_work.shape[-2] != 1:
-            raise ValueError(f"{op_name}: rhs H dimension must be 1 for BcastOpDim.H, got {y_work.shape[-2]}")
-        if y_work.shape[-1] != x.shape[-1]:
-            raise ValueError(f"{op_name}: rhs W dimension must match lhs W ({x.shape[-1]}), got {y_work.shape[-1]}")
-        if y_work.shape[:-2] != x.shape[:-2]:
-            raise ValueError(
-                f"{op_name}: leading dims must match for bcast, lhs={x.shape[:-2]}, rhs={y_work.shape[:-2]}"
-            )
-        tx = self._to_tt(x.astype(np.float32), op_name=f"{op_name}.lhs")
-        ty = self._to_tt(y_work.astype(np.float32), op_name=f"{op_name}.rhs")
-        tz = ttnn.bcast(tx, ty, math_op, ttnn.BcastOpDim.H)
-        return self._to_np(tz)
+    def _tt_bcast_h(self, x: Any, y: Any, *, math_op: Any, op_name: str) -> ttnn.Tensor:
+        x_shape = tuple(x.shape)
+        # expand_dims only when y is numpy and one rank short
+        if isinstance(y, np.ndarray) and y.ndim == len(x_shape) - 1:
+            y = np.expand_dims(y.astype(np.float32), axis=-2)
+        y_shape = tuple(y.shape)
+        if len(y_shape) != len(x_shape):
+            raise ValueError(f"{op_name}: rhs rank mismatch lhs={len(x_shape)}, rhs={len(y_shape)}")
+        if y_shape[-2] != 1:
+            raise ValueError(f"{op_name}: rhs H dimension must be 1 for BcastOpDim.H, got {y_shape[-2]}")
+        if y_shape[-1] != x_shape[-1]:
+            raise ValueError(f"{op_name}: rhs W must match lhs W ({x_shape[-1]}), got {y_shape[-1]}")
+        tx = self._ensure_tt(x, op_name=f"{op_name}.lhs")
+        ty = self._ensure_tt(y, op_name=f"{op_name}.rhs")
+        return ttnn.bcast(tx, ty, math_op, ttnn.BcastOpDim.H)
 
-    def _tt_bcast_h_add(self, x: np.ndarray, y: np.ndarray, *, op_name: str) -> np.ndarray:
+    def _tt_bcast_h_add(self, x: Any, y: Any, *, op_name: str) -> ttnn.Tensor:
         return self._tt_bcast_h(x, y, math_op=ttnn.BcastOpMath.ADD, op_name=op_name)
 
-    def _tt_bcast_h_mul(self, x: np.ndarray, y: np.ndarray, *, op_name: str) -> np.ndarray:
+    def _tt_bcast_h_mul(self, x: Any, y: Any, *, op_name: str) -> ttnn.Tensor:
         return self._tt_bcast_h(x, y, math_op=ttnn.BcastOpMath.MUL, op_name=op_name)
 
-    def _tt_concat(self, xs: list[np.ndarray], *, dim: int, op_name: str) -> np.ndarray:
-        tt_tensors = [self._to_tt(x.astype(np.float32), op_name=f"{op_name}.in{idx}") for idx, x in enumerate(xs)]
-        y = ttnn.concat(tt_tensors, dim=dim)
-        return self._to_np(y)
+    def _tt_concat(self, xs: list, *, dim: int, op_name: str) -> ttnn.Tensor:
+        tt_tensors = [self._ensure_tt(x, op_name=f"{op_name}.in{idx}") for idx, x in enumerate(xs)]
+        return ttnn.concat(tt_tensors, dim=dim)
 
-    def _tt_split_half(self, x: np.ndarray, *, dim: int, op_name: str) -> tuple[np.ndarray, np.ndarray]:
-        if x.shape[dim] % 2 != 0:
-            raise ValueError(f"{op_name}: split dimension {dim} size {x.shape[dim]} is not divisible by 2")
-        tx = self._to_tt(x.astype(np.float32), op_name=op_name)
-        parts = ttnn.split(tx, x.shape[dim] // 2, dim=dim)
+    def _tt_split_half(self, x: Any, *, dim: int, op_name: str) -> tuple[ttnn.Tensor, ttnn.Tensor]:
+        x_shape = tuple(x.shape)
+        if x_shape[dim] % 2 != 0:
+            raise ValueError(f"{op_name}: split dimension {dim} size {x_shape[dim]} is not divisible by 2")
+        tx = self._ensure_tt(x, op_name=op_name)
+        parts = ttnn.split(tx, x_shape[dim] // 2, dim=dim)
         if len(parts) != 2:
             raise RuntimeError(f"{op_name}: expected 2 chunks from split, got {len(parts)}")
-        return self._to_np(parts[0]), self._to_np(parts[1])
+        return parts[0], parts[1]
 
-    def _tt_layer_norm(self, x: np.ndarray, *, eps: float, op_name: str) -> np.ndarray:
-        tx = self._to_tt(x.astype(np.float32), op_name=op_name)
-        ty = ttnn.layer_norm(tx, epsilon=float(eps))
-        return self._to_np(ty)
+    def _tt_layer_norm(self, x: Any, *, eps: float, op_name: str) -> ttnn.Tensor:
+        return ttnn.layer_norm(self._ensure_tt(x, op_name=op_name), epsilon=float(eps))
 
     def _mh_attention(
         self,
-        q: np.ndarray,
-        k: np.ndarray,
-        v: np.ndarray,
+        q: ttnn.Tensor,
+        k: ttnn.Tensor,
+        v: ttnn.Tensor,
         *,
         attention_mask: np.ndarray | None,
-    ) -> np.ndarray:
-        batch, q_len, dim = q.shape
-        k_len = k.shape[1]
+    ) -> ttnn.Tensor:
+        batch, q_len, dim = tuple(q.shape)
+        k_len = int(tuple(k.shape)[1])
         heads = int(self.w["num_heads"])
         head_dim = dim // heads
 
         if self.device is None:
             raise RuntimeError("TTNN device unavailable at attention")
 
-        q_tt = self._to_tt(q.astype(np.float32), op_name="attn.q_in")
-        k_tt = self._to_tt(k.astype(np.float32), op_name="attn.k_in")
-        v_tt = self._to_tt(v.astype(np.float32), op_name="attn.v_in")
-
-        q_tt = ttnn.reshape(q_tt, (batch, q_len, heads, head_dim))
+        q_tt = ttnn.reshape(q, (batch, q_len, heads, head_dim))
         q_tt = ttnn.permute(q_tt, (0, 2, 1, 3))
-        k_tt = ttnn.reshape(k_tt, (batch, k_len, heads, head_dim))
+        k_tt = ttnn.reshape(k, (batch, k_len, heads, head_dim))
         k_tt = ttnn.permute(k_tt, (0, 2, 3, 1))
-        v_tt = ttnn.reshape(v_tt, (batch, k_len, heads, head_dim))
+        v_tt = ttnn.reshape(v, (batch, k_len, heads, head_dim))
         v_tt = ttnn.permute(v_tt, (0, 2, 1, 3))
 
         scores_tt = ttnn.matmul(q_tt, k_tt)
         scores_tt = ttnn.multiply(scores_tt, np.float32(1.0 / np.sqrt(float(head_dim))))
         if attention_mask is not None:
             keep = attention_mask.astype(bool)[:, None, None, :]
-            bias = np.where(keep, np.float32(0.0), np.float32(-1e9))
-            bias = bias.reshape(batch, 1, 1, k_len).astype(np.float32)
+            bias_np = np.where(keep, np.float32(0.0), np.float32(-1e9))
+            bias_np = bias_np.reshape(batch, 1, 1, k_len).astype(np.float32)
             if heads != 1 or q_len != 1:
-                bias = self._tt_repeat(bias, [1, heads, q_len, 1], op_name="attn.mask_repeat")
-            tbias = self._to_tt(bias, op_name="attn.mask_bias")
-            scores_tt = ttnn.add(scores_tt, tbias)
+                bias_tt = self._tt_repeat(bias_np, [1, heads, q_len, 1], op_name="attn.mask_repeat")
+            else:
+                bias_tt = self._ensure_tt(bias_np, op_name="attn.mask_bias")
+            scores_tt = ttnn.add(scores_tt, bias_tt)
         probs_tt = ttnn.softmax(scores_tt, dim=-1)
         ctx_tt = ttnn.matmul(probs_tt, v_tt)
         ctx_tt = ttnn.permute(ctx_tt, (0, 2, 1, 3))
-        ctx_tt = ttnn.reshape(ctx_tt, (batch, q_len, dim))
-        return self._to_np(ctx_tt)
+        return ttnn.reshape(ctx_tt, (batch, q_len, dim))
 
     def _build_inputs(self, args: argparse.Namespace) -> dict[str, np.ndarray]:
         rng = np.random.default_rng(args.seed)
@@ -624,7 +667,7 @@ class TtGr00tActionHeadRuntime:
         action_horizon: int,
         return_debug: bool = False,
     ) -> tuple[np.ndarray, np.ndarray, dict[str, np.ndarray] | None]:
-        batch = actions.shape[0]
+        batch = int(tuple(actions.shape)[0])
 
         t_bucket = np.full((batch,), int(t_discretized), dtype=np.int64)
         t_proj = timestep_embedding_np(t_bucket, embedding_dim=256)
@@ -648,12 +691,13 @@ class TtGr00tActionHeadRuntime:
 
         if self.w["add_pos_embed"] and self.w["pos_embedding"] is not None:
             pos = self.w["pos_embedding"][:action_horizon][None, :, :].astype(np.float32)
-            if action_features.shape[0] != 1:
-                pos = self._tt_repeat(pos, [action_features.shape[0], 1, 1], op_name="action.pos_repeat_batch")
+            af_batch = int(tuple(action_features.shape)[0])
+            if af_batch != 1:
+                pos = self._tt_repeat(pos, [af_batch, 1, 1], op_name="action.pos_repeat_batch")
             action_features = self._tt_add(action_features, pos, op_name="action.add_pos")
 
         hidden_states = self._tt_concat([state_features, action_features], dim=1, op_name="sa.concat")
-        block_hidden_states: list[np.ndarray] = [hidden_states.astype(np.float32)] if return_debug else []
+        block_hidden_states: list[np.ndarray] = [self._to_np(hidden_states)] if return_debug else []
         for i in range(int(self.w["num_layers"])):
             block = self.w["blocks"][i]
 
@@ -664,8 +708,8 @@ class TtGr00tActionHeadRuntime:
                 block["norm1_linear_b"],
                 op_name=f"block{i}.norm1_linear",
             )
-            scale, shift = self._tt_split_half(ada, dim=ada.ndim - 1, op_name=f"block{i}.ada_split")
-            scale_plus_one = self._tt_add(scale, np.ones_like(scale, dtype=np.float32), op_name=f"block{i}.scale_plus_one")
+            scale, shift = self._tt_split_half(ada, dim=len(ada.shape) - 1, op_name=f"block{i}.ada_split")
+            scale_plus_one = self._tt_add(scale, np.ones(tuple(scale.shape), dtype=np.float32), op_name=f"block{i}.scale_plus_one")
             norm_hidden = self._tt_bcast_h_mul(norm_hidden, scale_plus_one, op_name=f"block{i}.ada_mul")
             norm_hidden = self._tt_bcast_h_add(norm_hidden, shift, op_name=f"block{i}.ada_add")
 
@@ -696,10 +740,11 @@ class TtGr00tActionHeadRuntime:
                 op_name=f"block{i}.ff_in",
             )
             ff_out_in_dim = int(block["ff_out_w"].shape[1])
-            if ff_in.shape[-1] == ff_out_in_dim:
+            ff_in_last = int(tuple(ff_in.shape)[-1])
+            if ff_in_last == ff_out_in_dim:
                 ff_act = self._tt_gelu(ff_in, op_name=f"block{i}.ff_gelu")
-            elif ff_in.shape[-1] == 2 * ff_out_in_dim:
-                ff_x, ff_gate = self._tt_split_half(ff_in, dim=ff_in.ndim - 1, op_name=f"block{i}.ff_split")
+            elif ff_in_last == 2 * ff_out_in_dim:
+                ff_x, ff_gate = self._tt_split_half(ff_in, dim=len(ff_in.shape) - 1, op_name=f"block{i}.ff_split")
                 ff_act = self._tt_mul(
                     ff_x,
                     self._tt_gelu(ff_gate, op_name=f"block{i}.ff_gate_gelu"),
@@ -707,7 +752,7 @@ class TtGr00tActionHeadRuntime:
                 )
             else:
                 raise ValueError(
-                    f"block{i}.ff: unsupported dimensions ff_in={ff_in.shape[-1]}, "
+                    f"block{i}.ff: unsupported dimensions ff_in={ff_in_last}, "
                     f"ff_out_in_dim={ff_out_in_dim}"
                 )
             ff_out = self._linear_lastdim(
@@ -715,7 +760,7 @@ class TtGr00tActionHeadRuntime:
             )
             hidden_states = self._tt_add(hidden_states, ff_out, op_name=f"block{i}.resid_ff")
             if return_debug:
-                block_hidden_states.append(hidden_states.astype(np.float32))
+                block_hidden_states.append(self._to_np(hidden_states))
 
         out_norm = self._tt_layer_norm(hidden_states, eps=1e-6, op_name="out_norm")
         shift_scale = self._linear_lastdim(
@@ -724,8 +769,8 @@ class TtGr00tActionHeadRuntime:
             self.w["proj_out_1_b"],
             op_name="proj_out_1",
         )
-        shift, scale = self._tt_split_half(shift_scale, dim=shift_scale.ndim - 1, op_name="proj_out_1_split")
-        scale_plus_one = self._tt_add(scale, np.ones_like(scale, dtype=np.float32), op_name="proj_out_scale_plus_one")
+        shift, scale = self._tt_split_half(shift_scale, dim=len(shift_scale.shape) - 1, op_name="proj_out_1_split")
+        scale_plus_one = self._tt_add(scale, np.ones(tuple(scale.shape), dtype=np.float32), op_name="proj_out_scale_plus_one")
         out_norm = self._tt_bcast_h_mul(out_norm, scale_plus_one, op_name="proj_out_affine_mul")
         out_norm = self._tt_bcast_h_add(out_norm, shift, op_name="proj_out_affine_add")
         model_output = self._linear_lastdim(
@@ -735,20 +780,25 @@ class TtGr00tActionHeadRuntime:
         d1 = self._linear_lastdim(model_output, self.w["dec_l1_w"], self.w["dec_l1_b"], op_name="dec_l1")
         d1 = self._tt_relu(d1, op_name="dec_relu")
         pred = self._linear_lastdim(d1, self.w["dec_l2_w"], self.w["dec_l2_b"], op_name="dec_l2")
-        pred_velocity = pred[:, -action_horizon:, :]
+
+        # single download per run_step call
+        pred_np = self._to_np(pred)
+        model_output_np = self._to_np(model_output)
+        pred_velocity = pred_np[:, -action_horizon:, :]
+
         step_debug: dict[str, np.ndarray] | None = None
         if return_debug:
             step_debug = {
                 "timesteps": t_bucket.astype(np.int64),
-                "temb": temb.astype(np.float32),
-                "action_features": action_features.astype(np.float32),
-                "sa_embs": self._tt_concat([state_features, action_features], dim=1, op_name="debug.sa_embs"),
-                "model_output": model_output.astype(np.float32),
+                "temb": self._to_np(temb),
+                "action_features": self._to_np(action_features),
+                "sa_embs": self._to_np(self._tt_concat([state_features, action_features], dim=1, op_name="debug.sa_embs")),
+                "model_output": model_output_np,
                 "pred_velocity": pred_velocity.astype(np.float32),
             }
             for i, hs in enumerate(block_hidden_states):
                 step_debug[f"block_hidden_{i:02d}"] = hs
-        return pred_velocity.astype(np.float32), model_output.astype(np.float32), step_debug
+        return pred_velocity.astype(np.float32), model_output_np.astype(np.float32), step_debug
 
     def run_denoise_loop(
         self,
@@ -781,9 +831,10 @@ class TtGr00tActionHeadRuntime:
             vl_embeds = self._tt_layer_norm(vl_embeds, eps=1e-5, op_name="vlln.norm")
             vlln_w = self.w["vlln_w"].reshape(1, -1).astype(np.float32)
             vlln_b = self.w["vlln_b"].reshape(1, -1).astype(np.float32)
-            if vl_embeds.shape[0] != 1:
-                vlln_w = self._tt_repeat(vlln_w, [vl_embeds.shape[0], 1], op_name="vlln.w_repeat_batch")
-                vlln_b = self._tt_repeat(vlln_b, [vl_embeds.shape[0], 1], op_name="vlln.b_repeat_batch")
+            vl_batch = int(tuple(vl_embeds.shape)[0])
+            if vl_batch != 1:
+                vlln_w = self._tt_repeat(vlln_w, [vl_batch, 1], op_name="vlln.w_repeat_batch")
+                vlln_b = self._tt_repeat(vlln_b, [vl_batch, 1], op_name="vlln.b_repeat_batch")
             vl_embeds = self._tt_bcast_h_mul(vl_embeds, vlln_w, op_name="vlln.mul_weight")
             vl_embeds = self._tt_bcast_h_add(vl_embeds, vlln_b, op_name="vlln.add_bias")
 
@@ -793,15 +844,18 @@ class TtGr00tActionHeadRuntime:
             state_features, self.w["state_l2_w"], self.w["state_l2_b"], op_name="state_l2"
         )
         if return_debug:
-            debug["encoded/vl_embeds"] = vl_embeds.astype(np.float32)
-            debug["encoded/state_features"] = state_features.astype(np.float32)
+            debug["encoded/vl_embeds"] = self._to_np(vl_embeds) if isinstance(vl_embeds, ttnn.Tensor) else vl_embeds.astype(np.float32)
+            debug["encoded/state_features"] = self._to_np(state_features)
+
+        # pre-upload actions once; keep on device across all denoising steps
+        actions_tt = self._ensure_tt(actions, op_name="pre.actions")
 
         dt = np.float32(1.0 / float(args.num_inference_timesteps))
         for t in range(int(args.num_inference_timesteps)):
             t_cont = float(t) / float(args.num_inference_timesteps)
             t_discretized = int(t_cont * int(self.w["num_timestep_buckets"]))
             pred_velocity, _, step_debug = self.run_step(
-                actions=actions,
+                actions=actions_tt,
                 state_features=state_features,
                 vl_embeds=vl_embeds,
                 image_mask=image_mask,
@@ -810,18 +864,19 @@ class TtGr00tActionHeadRuntime:
                 action_horizon=action_horizon,
                 return_debug=return_debug,
             )
-            delta = self._tt_mul_scalar(pred_velocity, float(dt), op_name=f"step{t}.delta_scale")
-            actions = self._tt_add(actions, delta, op_name=f"step{t}.actions_update")
+            # pred_velocity is numpy (one download per step from run_step)
+            delta_tt = self._tt_mul_scalar(pred_velocity, float(dt), op_name=f"step{t}.delta_scale")
+            actions_tt = self._tt_add(actions_tt, delta_tt, op_name=f"step{t}.actions_update")
             print(
-                f"[ttnn_full] step={t} t_discretized={t_discretized} actions_shape={actions.shape}"
+                f"[ttnn_full] step={t} t_discretized={t_discretized} actions_shape={actions_tt.shape}"
             )
             if return_debug and step_debug is not None:
                 step_prefix = f"step_{t:02d}"
                 for k, v in step_debug.items():
                     debug[f"{step_prefix}/{k}"] = v
-                debug[f"{step_prefix}/actions"] = actions.astype(np.float32)
+                debug[f"{step_prefix}/actions"] = self._to_np(actions_tt).astype(np.float32)
 
-        out = actions.astype(np.float32)
+        out = self._to_np(actions_tt).astype(np.float32)
         if return_debug:
             debug["output/actions"] = out
             return out, debug
