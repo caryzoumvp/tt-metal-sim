@@ -818,6 +818,7 @@ def main() -> None:
             store,
             args,
             shared_inputs=shared_inputs,
+            return_debug=bool(args.dump_dir),
         )
         used_ttnn_device = bool(
             int(ttnn_debug.get("meta/used_ttnn_device", np.asarray([0], dtype=np.int64))[0])

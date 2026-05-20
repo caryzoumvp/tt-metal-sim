@@ -888,6 +888,7 @@ def run_ttnn_full_runtime(
     args: argparse.Namespace,
     *,
     shared_inputs: dict[str, np.ndarray] | None,
+    return_debug: bool = False,
 ) -> tuple[np.ndarray, dict[str, np.ndarray]]:
     if shared_inputs is None:
         raise ValueError("run_ttnn_full_runtime requires shared_inputs")
@@ -918,19 +919,26 @@ def run_ttnn_full_runtime(
             system1_inputs = _build_system1_inputs_from_shared(inputs)
             system1_runtime = TtGr00tSystem1BackboneRuntime(args=args, device=tt_device)
             system1_output = system1_runtime.run(system1_inputs)
+            # Free the 3B policy model before loading action head weights.
+            del system1_runtime
             inputs["vl_embeds"] = system1_output["backbone_features"].astype(np.float32)
             inputs["backbone_attention_mask"] = system1_output["backbone_attention_mask"].astype(bool)
             inputs["image_mask"] = system1_output["image_mask"].astype(bool)
 
             runtime = TtGr00tActionHeadRuntime.load_weights(store=store, args=args, device=tt_device)
-            ttnn_actions, ttnn_debug = runtime.run_denoise_loop(
+            denoise_result = runtime.run_denoise_loop(
                 args,
                 shared_inputs=inputs,
-                return_debug=True,
+                return_debug=return_debug,
             )
-            ttnn_debug["system1_output/backbone_features"] = inputs["vl_embeds"].astype(np.float32)
-            ttnn_debug["system1_output/backbone_attention_mask"] = inputs["backbone_attention_mask"].astype(bool)
-            ttnn_debug["system1_output/image_mask"] = inputs["image_mask"].astype(bool)
+            ttnn_debug: dict[str, np.ndarray] = {}
+            if return_debug:
+                ttnn_actions, ttnn_debug = denoise_result
+                ttnn_debug["system1_output/backbone_features"] = inputs["vl_embeds"].astype(np.float32)
+                ttnn_debug["system1_output/backbone_attention_mask"] = inputs["backbone_attention_mask"].astype(bool)
+                ttnn_debug["system1_output/image_mask"] = inputs["image_mask"].astype(bool)
+            else:
+                ttnn_actions = denoise_result
         finally:
             if tt_device is not None:
                 ttnn.close_device(tt_device)

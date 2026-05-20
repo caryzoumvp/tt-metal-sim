@@ -91,7 +91,6 @@ if [[ "${RUN_TTNN_FULL}" -eq 1 ]]; then
     --graph-mode ttnn_full \
     --input-source gr1 \
     --load-shared-inputs-dir "${SHARED_DIR}" \
-    --dump-dir "${COMPARE_DIR}" \
     --log-ttnn-ops \
     2>&1 | tee "${OPS_LOG}"
 fi
