@@ -1,0 +1,215 @@
+diff --git a/tt_metal/programming_examples/matmul/matmul_single_core/kernels/compute/mm.cpp b/tt_metal/programming_examples/matmul/matmul_single_core/kernels/compute/mm.cpp
+index cce19a89a8..158e5892e4 100644
+--- a/tt_metal/programming_examples/matmul/matmul_single_core/kernels/compute/mm.cpp
++++ b/tt_metal/programming_examples/matmul/matmul_single_core/kernels/compute/mm.cpp
+@@ -5,9 +5,11 @@
+ #include <cstdint>
+ #include "api/compute/tile_move_copy.h"
+ #include "api/compute/matmul.h"
++#include "api/debug/dprint.h"
+ #include "hostdevcommon/kernel_structs.h"
+ 
+ using std::uint32_t;
++using std::uint64_t;
+ 
+ /**
+  * @brief Main kernel function for batched matrix multiplication (BMM).
+@@ -52,35 +54,79 @@ void kernel_main() {
+     // the reader is expected to read the A's and B's tile rows and tile columns for each output tile
+     for (uint32_t mt = 0; mt < Mt; ++mt) {
+         for (uint32_t nt = 0; nt < Nt; ++nt) {
+-            // Make sure registers can be used for the output tile. This also sets the registers to zero.
++            uint64_t op_start = get_timestamp();
+             tile_regs_acquire();
++            uint64_t op_end = get_timestamp();
++            DPRINT_MATH(DPRINT << "mm mt=" << mt << " nt=" << nt
++                               << " tile_regs_acquire_cycles=" << (op_end - op_start) << ENDL());
++
+             for (uint32_t kt = 0; kt < Kt; kt++) {
+-                // Wait for the input tiles to be available in the input circular buffers.
++                op_start = get_timestamp();
+                 cb_wait_front(cb_in0, 1);
++                op_end = get_timestamp();
++                DPRINT_MATH(DPRINT << "mm mt=" << mt << " nt=" << nt << " kt=" << kt
++                                   << " cb_wait_front_in0_cycles=" << (op_end - op_start) << ENDL());
++
++                op_start = get_timestamp();
+                 cb_wait_front(cb_in1, 1);
++                op_end = get_timestamp();
++                DPRINT_MATH(DPRINT << "mm mt=" << mt << " nt=" << nt << " kt=" << kt
++                                   << " cb_wait_front_in1_cycles=" << (op_end - op_start) << ENDL());
+ 
+-                // Perform the matrix multiplication for the current tile.
+-                // NOTE: This function also accumulates the result into the destination tile.
++                op_start = get_timestamp();
+                 matmul_tiles(cb_in0, cb_in1, 0, 0, 0);
++                op_end = get_timestamp();
++                DPRINT_MATH(DPRINT << "mm mt=" << mt << " nt=" << nt << " kt=" << kt
++                                   << " matmul_tiles_cycles=" << (op_end - op_start) << ENDL());
+ 
+-                // Mark the input tiles as used by popping them from the front of the circular buffers.
++                op_start = get_timestamp();
+                 cb_pop_front(cb_in0, 1);
++                op_end = get_timestamp();
++                DPRINT_MATH(DPRINT << "mm mt=" << mt << " nt=" << nt << " kt=" << kt
++                                   << " cb_pop_front_in0_cycles=" << (op_end - op_start) << ENDL());
++
++                op_start = get_timestamp();
+                 cb_pop_front(cb_in1, 1);
++                op_end = get_timestamp();
++                DPRINT_MATH(DPRINT << "mm mt=" << mt << " nt=" << nt << " kt=" << kt
++                                   << " cb_pop_front_in1_cycles=" << (op_end - op_start) << ENDL());
+             }
+ 
+-            // Commit and wait for the registers are populated with the results from the FPU
++            op_start = get_timestamp();
+             tile_regs_commit();
++            op_end = get_timestamp();
++            DPRINT_MATH(DPRINT << "mm mt=" << mt << " nt=" << nt
++                               << " tile_regs_commit_cycles=" << (op_end - op_start) << ENDL());
++
++            op_start = get_timestamp();
+             tile_regs_wait();
++            op_end = get_timestamp();
++            DPRINT_MATH(DPRINT << "mm mt=" << mt << " nt=" << nt
++                               << " tile_regs_wait_cycles=" << (op_end - op_start) << ENDL());
+ 
+-            // Ensure the output circular buffer has space for the result tile.
++            op_start = get_timestamp();
+             cb_reserve_back(cb_out, 1);
+-            // Pack the result tile into the output circular buffer.
++            op_end = get_timestamp();
++            DPRINT_MATH(DPRINT << "mm mt=" << mt << " nt=" << nt
++                               << " cb_reserve_back_out_cycles=" << (op_end - op_start) << ENDL());
++
++            op_start = get_timestamp();
+             pack_tile(0, cb_out);
+-            // Mark the output tile as ready so the writer can read it.
++            op_end = get_timestamp();
++            DPRINT_MATH(DPRINT << "mm mt=" << mt << " nt=" << nt
++                               << " pack_tile_cycles=" << (op_end - op_start) << ENDL());
++
++            op_start = get_timestamp();
+             cb_push_back(cb_out, 1);
++            op_end = get_timestamp();
++            DPRINT_MATH(DPRINT << "mm mt=" << mt << " nt=" << nt
++                               << " cb_push_back_out_cycles=" << (op_end - op_start) << ENDL());
+ 
+-            // We don't need the registers anymore, so we can release them and prepare for the next output tile.
++            op_start = get_timestamp();
+             tile_regs_release();
++            op_end = get_timestamp();
++            DPRINT_MATH(DPRINT << "mm mt=" << mt << " nt=" << nt
++                               << " tile_regs_release_cycles=" << (op_end - op_start) << ENDL());
+         }
+     }
+ }
+diff --git a/tt_metal/programming_examples/matmul/matmul_single_core/kernels/dataflow/reader_single_core_mm.cpp b/tt_metal/programming_examples/matmul/matmul_single_core/kernels/dataflow/reader_single_core_mm.cpp
+index 83fcc48e33..efc703d624 100644
+--- a/tt_metal/programming_examples/matmul/matmul_single_core/kernels/dataflow/reader_single_core_mm.cpp
++++ b/tt_metal/programming_examples/matmul/matmul_single_core/kernels/dataflow/reader_single_core_mm.cpp
+@@ -4,7 +4,6 @@
+ 
+ #include <stdint.h>
+ #include "api/dataflow/dataflow_api.h"
+-
+ #include "api/debug/dprint.h"
+ 
+ void kernel_main() {
+@@ -28,25 +27,42 @@ void kernel_main() {
+     // Loop through the dimensions of the matrices. Read them and push to the circular buffers.
+     // Dimension names are called M, N and K. `t` in `mt` means tile.
+     for (uint32_t mt = 0; mt < Mt; mt++) {
+-        uint32_t itileB = 0;
+         for (uint32_t nt = 0; nt < Nt; nt++) {
+             for (uint32_t kt = 0; kt < Kt; kt++) {
+                 {                                          // Read A's tile at (mt, kt)
+                     uint32_t a_tile_index = mt * Kt + kt;  // A is MK, so we stride by Kt
+                     cb_reserve_back(cb_id_in0, 1);
+                     uint32_t l1_write_addr_in0 = get_write_ptr(cb_id_in0);
++                    uint64_t read_start = get_timestamp();
+                     noc_async_read_tile(a_tile_index, s0, l1_write_addr_in0);
++                    uint64_t read_issue_done = get_timestamp();
+                     noc_async_read_barrier();
++                    uint64_t read_done = get_timestamp();
+                     cb_push_back(cb_id_in0, 1);
++                    DPRINT_DATA1(
++                        DPRINT << "reader A mt=" << mt << " nt=" << nt << " kt=" << kt
++                               << " tile=" << a_tile_index << " noc_async_read_tile_cycles="
++                               << (read_issue_done - read_start)
++                               << " noc_async_read_barrier_cycles=" << (read_done - read_issue_done)
++                               << " noc_read_total_cycles=" << (read_done - read_start) << ENDL());
+                 }
+ 
+                 {                                          // Read B's tile at (kt, nt)
+                     uint32_t b_tile_index = kt * Nt + nt;  // B is KN, so we stride by Nt
+                     cb_reserve_back(cb_id_in1, 1);
+                     uint32_t l1_write_addr_in1 = get_write_ptr(cb_id_in1);
++                    uint64_t read_start = get_timestamp();
+                     noc_async_read_tile(b_tile_index, s1, l1_write_addr_in1);
++                    uint64_t read_issue_done = get_timestamp();
+                     noc_async_read_barrier();
++                    uint64_t read_done = get_timestamp();
+                     cb_push_back(cb_id_in1, 1);
++                    DPRINT_DATA1(
++                        DPRINT << "reader B mt=" << mt << " nt=" << nt << " kt=" << kt
++                               << " tile=" << b_tile_index << " noc_async_read_tile_cycles="
++                               << (read_issue_done - read_start)
++                               << " noc_async_read_barrier_cycles=" << (read_done - read_issue_done)
++                               << " noc_read_total_cycles=" << (read_done - read_start) << ENDL());
+                 }
+             }  // Kt loop
+         }  // Nt loop
+diff --git a/tt_metal/programming_examples/matmul/matmul_single_core/kernels/dataflow/writer_single_core_mm.cpp b/tt_metal/programming_examples/matmul/matmul_single_core/kernels/dataflow/writer_single_core_mm.cpp
+index 4396ec4022..15f1571ac1 100644
+--- a/tt_metal/programming_examples/matmul/matmul_single_core/kernels/dataflow/writer_single_core_mm.cpp
++++ b/tt_metal/programming_examples/matmul/matmul_single_core/kernels/dataflow/writer_single_core_mm.cpp
+@@ -3,6 +3,7 @@
+ // SPDX-License-Identifier: Apache-2.0
+ 
+ #include "api/dataflow/dataflow_api.h"
++#include "api/debug/dprint.h"
+ 
+ void kernel_main() {
+     // Runtime arguments to write data back into the output buffer.
+@@ -26,13 +27,22 @@ void kernel_main() {
+             cb_wait_front(cb_id_out0, 1);
+             // Write the output tile to DRAM.
+             uint32_t l1_read_addr = get_read_ptr(cb_id_out0);
+-            noc_async_write_tile(m * Nt + n, s, l1_read_addr);
++            uint32_t tile_index = m * Nt + n;
++            uint64_t write_start = get_timestamp();
++            noc_async_write_tile(tile_index, s, l1_read_addr);
++            uint64_t write_issue_done = get_timestamp();
+             noc_async_write_barrier();  // This will wait until the write is done. As an alternative,
+                                         // noc_async_write_flushed() can be faster because it waits
+                                         // until the write request is sent. In that case, you have to
+                                         // use noc_async_write_barrier() at least once at the end of
+                                         // data movement kernel to make sure all writes are done.
++            uint64_t write_done = get_timestamp();
+             cb_pop_front(cb_id_out0, 1);
++            DPRINT_DATA0(
++                DPRINT << "writer m=" << m << " n=" << n << " tile=" << tile_index
++                       << " noc_async_write_tile_cycles=" << (write_issue_done - write_start)
++                       << " noc_async_write_barrier_cycles=" << (write_done - write_issue_done)
++                       << " noc_write_total_cycles=" << (write_done - write_start) << ENDL());
+         }
+     }
+ }
+diff --git a/tt_metal/programming_examples/matmul/matmul_single_core/matmul_single_core.cpp b/tt_metal/programming_examples/matmul/matmul_single_core/matmul_single_core.cpp
+index 606b641589..c9d4622194 100644
+--- a/tt_metal/programming_examples/matmul/matmul_single_core/matmul_single_core.cpp
++++ b/tt_metal/programming_examples/matmul/matmul_single_core/matmul_single_core.cpp
+@@ -191,9 +191,9 @@ int main() {
+         std::shared_ptr<distributed::MeshDevice> mesh_device = distributed::MeshDevice::create_unit_mesh(device_id);
+ 
+         // parameters for the matrix multiplication
+-        constexpr uint32_t M = 640;  // user-defined
+-        constexpr uint32_t N = 640;  // user-defined
+-        constexpr uint32_t K = 640;  // user-defined
++        constexpr uint32_t M = 128;  // user-defined
++        constexpr uint32_t N = 128;  // user-defined
++        constexpr uint32_t K = 128;  // user-defined
+ 
+         static_assert(M % TILE_HEIGHT == 0, "M must be divisible by TILE_HEIGHT");
+         static_assert(N % TILE_WIDTH == 0, "N must be divisible by TILE_WIDTH");

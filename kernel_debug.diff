@@ -1,0 +1,814 @@
+diff --git a/tt_metal/programming_examples/matmul/matmul_common/kernels/dataflow/reader_bmm_tile_layout_in0_receiver_in1_receiver.cpp b/tt_metal/programming_examples/matmul/matmul_common/kernels/dataflow/reader_bmm_tile_layout_in0_receiver_in1_receiver.cpp
+index b345d12d7f..777d546415 100644
+--- a/tt_metal/programming_examples/matmul/matmul_common/kernels/dataflow/reader_bmm_tile_layout_in0_receiver_in1_receiver.cpp
++++ b/tt_metal/programming_examples/matmul/matmul_common/kernels/dataflow/reader_bmm_tile_layout_in0_receiver_in1_receiver.cpp
+@@ -4,6 +4,7 @@
+ 
+ #include <stdint.h>
+ #include "api/dataflow/dataflow_api.h"
++#include "api/debug/dprint.h"
+ #include "hostdevcommon/common_values.hpp"
+ 
+ void kernel_main() {
+@@ -72,11 +73,13 @@ void kernel_main() {
+ 
+     for (uint32_t b = 0; b < batch; b++) {
+         for (uint32_t block = 0; block < num_blocks; block++) {
++            DPRINT << "mcast rr block=" << block << " start" << ENDL();
+             // Operand 0
+             cb_reserve_back(cb_id_in0, in0_block_num_tiles);
+ 
+             // Set in0 semaphore value to INVALID
+             noc_semaphore_set(in0_mcast_receiver_semaphore_addr_ptr, INVALID);
++            DPRINT << "mcast rr block=" << block << " in0 notify sender" << ENDL();
+ 
+             // Atomic increment source core counter
+             uint64_t in0_mcast_sender_semaphore_noc_addr =
+@@ -84,7 +87,9 @@ void kernel_main() {
+             noc_semaphore_inc(in0_mcast_sender_semaphore_noc_addr, 1);
+ 
+             // wait on in0 semaphore value to become VALID (set by mcast sender after it multicasts data)
++            DPRINT << "mcast rr block=" << block << " in0 wait sender" << ENDL();
+             noc_semaphore_wait(in0_mcast_receiver_semaphore_addr_ptr, VALID);
++            DPRINT << "mcast rr block=" << block << " in0 sender done" << ENDL();
+ 
+             cb_push_back(cb_id_in0, in0_block_num_tiles);
+ 
+@@ -93,13 +98,16 @@ void kernel_main() {
+ 
+             // Set in1 semaphore value to INVALID
+             noc_semaphore_set(in1_mcast_receiver_semaphore_addr_ptr, INVALID);
++            DPRINT << "mcast rr block=" << block << " in1 notify sender" << ENDL();
+ 
+             uint64_t in1_mcast_sender_semaphore_noc_addr =
+                 get_noc_addr(in1_mcast_sender_noc_x, in1_mcast_sender_noc_y, in1_mcast_sender_semaphore_addr);
+             noc_semaphore_inc(in1_mcast_sender_semaphore_noc_addr, 1);
+ 
+             // wait on in1 semaphore value to become VALID (set by mcast sender after it multicasts data)
++            DPRINT << "mcast rr block=" << block << " in1 wait sender" << ENDL();
+             noc_semaphore_wait(in1_mcast_receiver_semaphore_addr_ptr, VALID);
++            DPRINT << "mcast rr block=" << block << " in1 sender done" << ENDL();
+ 
+             cb_push_back(cb_id_in1, in1_block_num_tiles);
+         }
+diff --git a/tt_metal/programming_examples/matmul/matmul_common/kernels/dataflow/reader_bmm_tile_layout_in0_receiver_in1_sender.cpp b/tt_metal/programming_examples/matmul/matmul_common/kernels/dataflow/reader_bmm_tile_layout_in0_receiver_in1_sender.cpp
+index 5357e5efe1..e438a05a8d 100644
+--- a/tt_metal/programming_examples/matmul/matmul_common/kernels/dataflow/reader_bmm_tile_layout_in0_receiver_in1_sender.cpp
++++ b/tt_metal/programming_examples/matmul/matmul_common/kernels/dataflow/reader_bmm_tile_layout_in0_receiver_in1_sender.cpp
+@@ -4,6 +4,7 @@
+ 
+ #include <stdint.h>
+ #include "api/dataflow/dataflow_api.h"
++#include "api/debug/dprint.h"
+ #include "hostdevcommon/common_values.hpp"
+ 
+ void kernel_main() {
+@@ -88,11 +89,13 @@ void kernel_main() {
+     for (uint32_t b = 0; b < batch; b++) {
+         uint32_t in1_tensor_current_block_start_tile_id = in1_tensor_start_tile_id;
+         for (uint32_t block = 0; block < num_blocks; block++) {
++            DPRINT << "mcast rs block=" << block << " start" << ENDL();
+             // Operand 0
+             cb_reserve_back(cb_id_in0, in0_block_num_tiles);
+ 
+             // Set in0 semaphore value to INVALID
+             noc_semaphore_set(in0_mcast_receiver_semaphore_addr_ptr, INVALID);
++            DPRINT << "mcast rs block=" << block << " in0 notify sender" << ENDL();
+ 
+             // Atomic increment source core counter
+             uint64_t in0_mcast_sender_semaphore_noc_addr =
+@@ -100,7 +103,9 @@ void kernel_main() {
+             noc_semaphore_inc(in0_mcast_sender_semaphore_noc_addr, 1);
+ 
+             // wait on in0 semaphore value to become VALID (set by mcast sender after it multicasts data)
++            DPRINT << "mcast rs block=" << block << " in0 wait sender" << ENDL();
+             noc_semaphore_wait(in0_mcast_receiver_semaphore_addr_ptr, VALID);
++            DPRINT << "mcast rs block=" << block << " in0 sender done" << ENDL();
+ 
+             cb_push_back(cb_id_in0, in0_block_num_tiles);
+ 
+@@ -128,9 +133,11 @@ void kernel_main() {
+             // Barrier! make sure the reads are done
+             noc_async_read_barrier();
+ 
++            DPRINT << "mcast rs block=" << block << " in1 wait receivers" << ENDL();
+             // wait until all in1 mcast destinations have atomically incremented the in1 semaphore_addr (i.e. its value
+             // should be in0_mcast_num_dests), then reset the semaphore_addr value back to zero for the next block
+             noc_semaphore_wait(in1_mcast_sender_semaphore_addr_ptr, in1_mcast_num_dests);
++            DPRINT << "mcast rs block=" << block << " in1 receivers ready" << ENDL();
+             noc_semaphore_set(in1_mcast_sender_semaphore_addr_ptr, 0);
+ 
+             // Now we have the block in the CB address, we can mcast to dests!
+@@ -143,6 +150,7 @@ void kernel_main() {
+             // num_dests must not include source, since we are NOT really doing a local copy!
+             noc_async_write_multicast(
+                 in1_start_address, in1_multicast_data_addr, in1_block_size_bytes, in1_mcast_num_dests);
++            DPRINT << "mcast rs block=" << block << " in1 data multicast sent" << ENDL();
+ 
+             // Note: no need for write barrier, since these two multicasts are done on the same noc id and same vc even
+             // though cmd bufs are different Also, this only works because we are setting VCs statically (using
+@@ -163,6 +171,7 @@ void kernel_main() {
+             // num_dests must not include source, since we are NOT really doing a local copy!
+             noc_semaphore_set_multicast(
+                 in1_mcast_receiver_semaphore_addr, in1_mcast_receiver_semaphore_noc_addr, in1_mcast_num_dests);
++            DPRINT << "mcast rs block=" << block << " in1 flag multicast sent" << ENDL();
+ 
+             cb_push_back(cb_id_in1, in1_block_num_tiles);
+         }
+diff --git a/tt_metal/programming_examples/matmul/matmul_common/kernels/dataflow/reader_bmm_tile_layout_in0_sender_in1_receiver.cpp b/tt_metal/programming_examples/matmul/matmul_common/kernels/dataflow/reader_bmm_tile_layout_in0_sender_in1_receiver.cpp
+index b74d09d4cf..3331fba8b2 100644
+--- a/tt_metal/programming_examples/matmul/matmul_common/kernels/dataflow/reader_bmm_tile_layout_in0_sender_in1_receiver.cpp
++++ b/tt_metal/programming_examples/matmul/matmul_common/kernels/dataflow/reader_bmm_tile_layout_in0_sender_in1_receiver.cpp
+@@ -4,6 +4,7 @@
+ 
+ #include <stdint.h>
+ #include "api/dataflow/dataflow_api.h"
++#include "api/debug/dprint.h"
+ #include "hostdevcommon/common_values.hpp"
+ 
+ void kernel_main() {
+@@ -87,6 +88,7 @@ void kernel_main() {
+     for (uint32_t b = 0; b < batch; b++) {
+         uint32_t in0_tensor_current_block_start_tile_id = in0_tensor_start_tile_id;
+         for (uint32_t block = 0; block < num_blocks; block++) {
++            DPRINT << "mcast sr block=" << block << " start" << ENDL();
+             cb_reserve_back(cb_id_in0, in0_block_num_tiles);
+             l1_write_addr_in0 = get_write_ptr(cb_id_in0);
+ 
+@@ -110,9 +112,11 @@ void kernel_main() {
+             // Barrier! make sure the reads are done
+             noc_async_read_barrier();
+ 
++            DPRINT << "mcast sr block=" << block << " in0 wait receivers" << ENDL();
+             // wait until all in0 mcast destinations have atomically incremented the in0 semaphore_addr (i.e. its value
+             // should be in0_mcast_num_dests), then reset the semaphore_addr value back to zero for the next block
+             noc_semaphore_wait(in0_mcast_sender_semaphore_addr_ptr, in0_mcast_num_dests);
++            DPRINT << "mcast sr block=" << block << " in0 receivers ready" << ENDL();
+             noc_semaphore_set(in0_mcast_sender_semaphore_addr_ptr, 0);
+             // Now we have the block in the CB address, we can mcast to dests!
+             uint64_t in0_multicast_data_addr = get_noc_multicast_addr(
+@@ -124,6 +128,7 @@ void kernel_main() {
+             // num_dests must not include source, since we are NOT really doing a local copy!
+             noc_async_write_multicast(
+                 in0_start_address, in0_multicast_data_addr, in0_block_size_bytes, in0_mcast_num_dests);
++            DPRINT << "mcast sr block=" << block << " in0 data multicast sent" << ENDL();
+ 
+             // Note: no need for write barrier, since these two multicasts are done on the same noc id and same vc even
+             // though cmd bufs are different Also, this only works because we are setting VCs statically (using
+@@ -144,6 +149,7 @@ void kernel_main() {
+             // num_dests must not include source, since we are NOT really doing a local copy!
+             noc_semaphore_set_multicast(
+                 in0_mcast_receiver_semaphore_addr, in0_mcast_receiver_semaphore_noc_addr, in0_mcast_num_dests);
++            DPRINT << "mcast sr block=" << block << " in0 flag multicast sent" << ENDL();
+ 
+             cb_push_back(cb_id_in0, in0_block_num_tiles);
+ 
+@@ -152,13 +158,16 @@ void kernel_main() {
+ 
+             // Set in1 semaphore value to INVALID
+             noc_semaphore_set(in1_mcast_receiver_semaphore_addr_ptr, INVALID);
++            DPRINT << "mcast sr block=" << block << " in1 notify sender" << ENDL();
+ 
+             uint64_t in1_mcast_sender_semaphore_noc_addr =
+                 get_noc_addr(in1_mcast_sender_noc_x, in1_mcast_sender_noc_y, in1_mcast_sender_semaphore_addr);
+             noc_semaphore_inc(in1_mcast_sender_semaphore_noc_addr, 1);
+ 
+             // wait on in1 semaphore value to become VALID (set by mcast sender after it multicasts data)
++            DPRINT << "mcast sr block=" << block << " in1 wait sender" << ENDL();
+             noc_semaphore_wait(in1_mcast_receiver_semaphore_addr_ptr, VALID);
++            DPRINT << "mcast sr block=" << block << " in1 sender done" << ENDL();
+ 
+             cb_push_back(cb_id_in1, in1_block_num_tiles);
+         }
+diff --git a/tt_metal/programming_examples/matmul/matmul_common/kernels/dataflow/reader_bmm_tile_layout_in0_sender_in1_sender.cpp b/tt_metal/programming_examples/matmul/matmul_common/kernels/dataflow/reader_bmm_tile_layout_in0_sender_in1_sender.cpp
+index 0a36348e32..c2e4b071c6 100644
+--- a/tt_metal/programming_examples/matmul/matmul_common/kernels/dataflow/reader_bmm_tile_layout_in0_sender_in1_sender.cpp
++++ b/tt_metal/programming_examples/matmul/matmul_common/kernels/dataflow/reader_bmm_tile_layout_in0_sender_in1_sender.cpp
+@@ -4,6 +4,7 @@
+ 
+ #include <stdint.h>
+ #include "api/dataflow/dataflow_api.h"
++#include "api/debug/dprint.h"
+ #include "hostdevcommon/common_values.hpp"
+ 
+ void kernel_main() {
+@@ -101,6 +102,7 @@ void kernel_main() {
+         uint32_t in0_tensor_current_block_start_tile_id = in0_tensor_start_tile_id;
+         uint32_t in1_tensor_current_block_start_tile_id = in1_tensor_start_tile_id;
+         for (uint32_t block = 0; block < num_blocks; block++) {
++            DPRINT << "mcast ss block=" << block << " start" << ENDL();
+             cb_reserve_back(cb_id_in0, in0_block_num_tiles);
+             l1_write_addr_in0 = get_write_ptr(cb_id_in0);
+ 
+@@ -124,9 +126,11 @@ void kernel_main() {
+             // Barrier! make sure the reads are done
+             noc_async_read_barrier();
+ 
++            DPRINT << "mcast ss block=" << block << " in0 wait receivers" << ENDL();
+             // wait until all in0 mcast destinations have atomically incremented the in0 semaphore_addr (i.e. its value
+             // should be in0_mcast_num_dests), then reset the semaphore_addr value back to zero for the next block
+             noc_semaphore_wait(in0_mcast_sender_semaphore_addr_ptr, in0_mcast_num_dests);
++            DPRINT << "mcast ss block=" << block << " in0 receivers ready" << ENDL();
+             noc_semaphore_set(in0_mcast_sender_semaphore_addr_ptr, 0);
+ 
+             // Now we have the block in the CB address, we can mcast to dests!
+@@ -139,6 +143,7 @@ void kernel_main() {
+             // num_dests must not include source, since we are NOT really doing a local copy!
+             noc_async_write_multicast(
+                 in0_start_address, in0_multicast_data_addr, in0_block_size_bytes, in0_mcast_num_dests);
++            DPRINT << "mcast ss block=" << block << " in0 data multicast sent" << ENDL();
+ 
+             // Note: no need for write barrier, since these two multicasts are done on the same noc id and same vc even
+             // though cmd bufs are different Also, this only works because we are setting VCs statically (using
+@@ -159,6 +164,7 @@ void kernel_main() {
+             // num_dests must not include source, since we are NOT really doing a local copy!
+             noc_semaphore_set_multicast(
+                 in0_mcast_receiver_semaphore_addr, in0_mcast_receiver_semaphore_noc_addr, in0_mcast_num_dests);
++            DPRINT << "mcast ss block=" << block << " in0 flag multicast sent" << ENDL();
+ 
+             cb_push_back(cb_id_in0, in0_block_num_tiles);
+ 
+@@ -186,9 +192,11 @@ void kernel_main() {
+             // Barrier! make sure the reads are done
+             noc_async_read_barrier();
+ 
++            DPRINT << "mcast ss block=" << block << " in1 wait receivers" << ENDL();
+             // wait until all in1 mcast destinations have atomically incremented the in1 semaphore_addr (i.e. its value
+             // should be in0_mcast_num_dests), then reset the semaphore_addr value back to zero for the next block
+             noc_semaphore_wait(in1_mcast_sender_semaphore_addr_ptr, in1_mcast_num_dests);
++            DPRINT << "mcast ss block=" << block << " in1 receivers ready" << ENDL();
+             noc_semaphore_set(in1_mcast_sender_semaphore_addr_ptr, 0);
+ 
+             // Now we have the block in the CB address, we can mcast to dests!
+@@ -201,6 +209,7 @@ void kernel_main() {
+             // num_dests must not include source, since we are NOT really doing a local copy!
+             noc_async_write_multicast(
+                 in1_start_address, in1_multicast_data_addr, in1_block_size_bytes, in1_mcast_num_dests);
++            DPRINT << "mcast ss block=" << block << " in1 data multicast sent" << ENDL();
+ 
+             // Note: no need for write barrier, since these two multicasts are done on the same noc id and same vc even
+             // though cmd bufs are different Also, this only works because we are setting VCs statically (using
+@@ -221,6 +230,7 @@ void kernel_main() {
+             // num_dests must not include source, since we are NOT really doing a local copy!
+             noc_semaphore_set_multicast(
+                 in1_mcast_receiver_semaphore_addr, in1_mcast_receiver_semaphore_noc_addr, in1_mcast_num_dests);
++            DPRINT << "mcast ss block=" << block << " in1 flag multicast sent" << ENDL();
+ 
+             cb_push_back(cb_id_in1, in1_block_num_tiles);
+         }
+diff --git a/tt_metal/programming_examples/matmul/matmul_multi_core/matmul_multi_core.cpp b/tt_metal/programming_examples/matmul/matmul_multi_core/matmul_multi_core.cpp
+index dc47330df6..aff3924b7c 100644
+--- a/tt_metal/programming_examples/matmul/matmul_multi_core/matmul_multi_core.cpp
++++ b/tt_metal/programming_examples/matmul/matmul_multi_core/matmul_multi_core.cpp
+@@ -120,7 +120,6 @@ void matmul_multi_core(
+     // approach minimizes workload imbalance between cores for optimal performance.
+     auto [num_cores, all_cores, core_group_1, core_group_2, work_per_core1, work_per_core2] =
+         split_work_to_cores(core_grid, num_output_tiles_total);
+-
+     // Extracting Matrix dimensions from input/output vectors and converting to tile coordinates.
+     // The accelerator works with 32x32 tiles, so we need to convert from element dimensions
+     // to tile dimensions for proper addressing and computation.
+@@ -249,7 +248,6 @@ void matmul_multi_core(
+             }
+         }
+     }
+-
+     // Launch program & read in output buffer result into the host vector
+     // 1. Upload input data to DRAM buffers
+     // 2. Execute the program (all kernels run in parallel across cores)
+diff --git a/tt_metal/programming_examples/matmul/matmul_multicore_reuse_mcast/matmul_multicore_reuse_mcast.cpp b/tt_metal/programming_examples/matmul/matmul_multicore_reuse_mcast/matmul_multicore_reuse_mcast.cpp
+index c2e398f3eb..e08db194b6 100644
+--- a/tt_metal/programming_examples/matmul/matmul_multicore_reuse_mcast/matmul_multicore_reuse_mcast.cpp
++++ b/tt_metal/programming_examples/matmul/matmul_multicore_reuse_mcast/matmul_multicore_reuse_mcast.cpp
+@@ -12,6 +12,7 @@
+ #include <tt-metalium/distributed.hpp>
+ #include <bmm_op.hpp>
+ #include <algorithm>
++#include <optional>
+ #include "tt-metalium/core_coord.hpp"
+ 
+ using namespace tt::constants;
+@@ -175,6 +176,8 @@ void matmul_multicore_reuse_mcast(
+     uint32_t start_core_y = start_core.y;
+     uint32_t num_cores_c = core_range.x;
+     uint32_t num_cores_r = core_range.y;
++    bool has_multiple_cols = num_cores_c > 1;
++    bool has_multiple_rows = num_cores_r > 1;
+ 
+     CoreRange all_cores(
+         {(std::size_t)start_core_x, (std::size_t)start_core_y},
+@@ -184,24 +187,36 @@ void matmul_multicore_reuse_mcast(
+         {(std::size_t)start_core_x, (std::size_t)start_core_y},
+         {(std::size_t)start_core_x, (std::size_t)start_core_y + num_cores_r - 1});
+ 
+-    CoreRange all_except_left_column(
+-        {(std::size_t)start_core_x + 1, (std::size_t)start_core_y},
+-        {(std::size_t)start_core_x + num_cores_c - 1, (std::size_t)start_core_y + num_cores_r - 1});
++    std::optional<CoreRange> all_except_left_column;
++    if (has_multiple_cols) {
++        all_except_left_column.emplace(
++            CoreCoord{(std::size_t)start_core_x + 1, (std::size_t)start_core_y},
++            CoreCoord{(std::size_t)start_core_x + num_cores_c - 1, (std::size_t)start_core_y + num_cores_r - 1});
++    }
+ 
+     CoreRange in0_sender_in1_sender(
+         {(std::size_t)start_core_x, (std::size_t)start_core_y}, {(std::size_t)start_core_x, (std::size_t)start_core_y});
+ 
+-    CoreRange in0_sender_in1_receiver(
+-        {(std::size_t)start_core_x, (std::size_t)start_core_y + 1},
+-        {(std::size_t)start_core_x, (std::size_t)start_core_y + num_cores_r - 1});
++    std::optional<CoreRange> in0_sender_in1_receiver;
++    if (has_multiple_rows) {
++        in0_sender_in1_receiver.emplace(
++            CoreCoord{(std::size_t)start_core_x, (std::size_t)start_core_y + 1},
++            CoreCoord{(std::size_t)start_core_x, (std::size_t)start_core_y + num_cores_r - 1});
++    }
+ 
+-    CoreRange in0_receiver_in1_sender(
+-        {(std::size_t)start_core_x + 1, (std::size_t)start_core_y},
+-        {(std::size_t)start_core_x + num_cores_c - 1, (std::size_t)start_core_y});
++    std::optional<CoreRange> in0_receiver_in1_sender;
++    if (has_multiple_cols) {
++        in0_receiver_in1_sender.emplace(
++            CoreCoord{(std::size_t)start_core_x + 1, (std::size_t)start_core_y},
++            CoreCoord{(std::size_t)start_core_x + num_cores_c - 1, (std::size_t)start_core_y});
++    }
+ 
+-    CoreRange in0_receiver_in1_receiver(
+-        {(std::size_t)start_core_x + 1, (std::size_t)start_core_y + 1},
+-        {(std::size_t)start_core_x + num_cores_c - 1, (std::size_t)start_core_y + num_cores_r - 1});
++    std::optional<CoreRange> in0_receiver_in1_receiver;
++    if (has_multiple_cols && has_multiple_rows) {
++        in0_receiver_in1_receiver.emplace(
++            CoreCoord{(std::size_t)start_core_x + 1, (std::size_t)start_core_y + 1},
++            CoreCoord{(std::size_t)start_core_x + num_cores_c - 1, (std::size_t)start_core_y + num_cores_r - 1});
++    }
+ 
+     //////////////////////////////////////////////////
+     /*
+@@ -273,41 +288,53 @@ void matmul_multicore_reuse_mcast(
+             .noc = tt_metal::NOC::RISCV_0_default,
+             .compile_args = reader_compile_time_args});
+ 
+-    auto mm_reader_kernel_in0_sender_in1_receiver_id = tt_metal::CreateKernel(
+-        program,
+-        OVERRIDE_KERNEL_PREFIX "matmul/matmul_common/kernels/dataflow/reader_bmm_tile_layout_in0_sender_in1_receiver.cpp",
+-        in0_sender_in1_receiver,
+-        tt_metal::DataMovementConfig{
+-            .processor = tt_metal::DataMovementProcessor::RISCV_1,
+-            .noc = tt_metal::NOC::RISCV_0_default,
+-            .compile_args = reader_compile_time_args});
++    std::optional<KernelHandle> mm_reader_kernel_in0_sender_in1_receiver_id;
++    if (in0_sender_in1_receiver.has_value()) {
++        mm_reader_kernel_in0_sender_in1_receiver_id = tt_metal::CreateKernel(
++            program,
++            OVERRIDE_KERNEL_PREFIX "matmul/matmul_common/kernels/dataflow/reader_bmm_tile_layout_in0_sender_in1_receiver.cpp",
++            *in0_sender_in1_receiver,
++            tt_metal::DataMovementConfig{
++                .processor = tt_metal::DataMovementProcessor::RISCV_1,
++                .noc = tt_metal::NOC::RISCV_0_default,
++                .compile_args = reader_compile_time_args});
++    }
+ 
+-    auto mm_reader_kernel_in0_receiver_in1_sender_id = tt_metal::CreateKernel(
+-        program,
+-        OVERRIDE_KERNEL_PREFIX "matmul/matmul_common/kernels/dataflow/reader_bmm_tile_layout_in0_receiver_in1_sender.cpp",
+-        in0_receiver_in1_sender,
+-        tt_metal::DataMovementConfig{
+-            .processor = tt_metal::DataMovementProcessor::RISCV_1,
+-            .noc = tt_metal::NOC::RISCV_1_default,
+-            .compile_args = reader_compile_time_args});
++    std::optional<KernelHandle> mm_reader_kernel_in0_receiver_in1_sender_id;
++    if (in0_receiver_in1_sender.has_value()) {
++        mm_reader_kernel_in0_receiver_in1_sender_id = tt_metal::CreateKernel(
++            program,
++            OVERRIDE_KERNEL_PREFIX "matmul/matmul_common/kernels/dataflow/reader_bmm_tile_layout_in0_receiver_in1_sender.cpp",
++            *in0_receiver_in1_sender,
++            tt_metal::DataMovementConfig{
++                .processor = tt_metal::DataMovementProcessor::RISCV_1,
++                .noc = tt_metal::NOC::RISCV_1_default,
++                .compile_args = reader_compile_time_args});
++    }
+ 
+-    auto mm_reader_kernel_in0_receiver_in1_receiver_id = tt_metal::CreateKernel(
+-        program,
+-        OVERRIDE_KERNEL_PREFIX "matmul/matmul_common/kernels/dataflow/reader_bmm_tile_layout_in0_receiver_in1_receiver.cpp",
+-        in0_receiver_in1_receiver,
+-        tt_metal::DataMovementConfig{
+-            .processor = tt_metal::DataMovementProcessor::RISCV_1,
+-            .noc = tt_metal::NOC::RISCV_1_default,
+-            .compile_args = reader_compile_time_args});
++    std::optional<KernelHandle> mm_reader_kernel_in0_receiver_in1_receiver_id;
++    if (in0_receiver_in1_receiver.has_value()) {
++        mm_reader_kernel_in0_receiver_in1_receiver_id = tt_metal::CreateKernel(
++            program,
++            OVERRIDE_KERNEL_PREFIX "matmul/matmul_common/kernels/dataflow/reader_bmm_tile_layout_in0_receiver_in1_receiver.cpp",
++            *in0_receiver_in1_receiver,
++            tt_metal::DataMovementConfig{
++                .processor = tt_metal::DataMovementProcessor::RISCV_1,
++                .noc = tt_metal::NOC::RISCV_1_default,
++                .compile_args = reader_compile_time_args});
++    }
+ 
+-    auto unary_writer_kernel_noc0_id = tt_metal::CreateKernel(
+-        program,
+-        OVERRIDE_KERNEL_PREFIX "matmul/matmul_common/kernels/dataflow/writer_bmm_tile_layout.cpp",
+-        all_except_left_column,
+-        tt_metal::DataMovementConfig{
+-            .processor = tt_metal::DataMovementProcessor::RISCV_0,
+-            .noc = tt_metal::NOC::RISCV_0_default,
+-            .compile_args = writer_compile_time_args});
++    std::optional<KernelHandle> unary_writer_kernel_noc0_id;
++    if (all_except_left_column.has_value()) {
++        unary_writer_kernel_noc0_id = tt_metal::CreateKernel(
++            program,
++            OVERRIDE_KERNEL_PREFIX "matmul/matmul_common/kernels/dataflow/writer_bmm_tile_layout.cpp",
++            *all_except_left_column,
++            tt_metal::DataMovementConfig{
++                .processor = tt_metal::DataMovementProcessor::RISCV_0,
++                .noc = tt_metal::NOC::RISCV_0_default,
++                .compile_args = writer_compile_time_args});
++    }
+ 
+     auto unary_writer_kernel_noc1_id = tt_metal::CreateKernel(
+         program,
+@@ -338,10 +365,14 @@ void matmul_multicore_reuse_mcast(
+             CoreCoord core = {(std::size_t)start_core_x + core_idx_x, (std::size_t)start_core_y + core_idx_y};
+ 
+             CoreCoord left_core = {(std::size_t)start_core_x, (std::size_t)core.y};
+-            CoreCoord left_core_plus_one = {(std::size_t)start_core_x + 1, (std::size_t)core.y};
++            CoreCoord left_core_plus_one = has_multiple_cols
++                                               ? CoreCoord{(std::size_t)start_core_x + 1, (std::size_t)core.y}
++                                               : left_core;
+             CoreCoord right_core = {(std::size_t)start_core_x + num_cores_c - 1, (std::size_t)core.y};
+             CoreCoord top_core = {(std::size_t)core.x, (std::size_t)start_core_y};
+-            CoreCoord top_core_plus_one = {(std::size_t)core.x, (std::size_t)start_core_y + 1};
++            CoreCoord top_core_plus_one = has_multiple_rows
++                                              ? CoreCoord{(std::size_t)core.x, (std::size_t)start_core_y + 1}
++                                              : top_core;
+             CoreCoord bottom_core = {(std::size_t)core.x, (std::size_t)start_core_y + num_cores_r - 1};
+ 
+             auto left_core_physical = mesh_device->worker_core_from_logical_core(left_core);
+@@ -424,16 +455,16 @@ void matmul_multicore_reuse_mcast(
+                 tt_metal::SetRuntimeArgs(program, unary_writer_kernel_noc1_id, core, writer_args);  // RISCV_1_default
+             } else if (core_idx_x == 0 and core_idx_y != 0) {
+                 tt_metal::SetRuntimeArgs(
+-                    program, mm_reader_kernel_in0_sender_in1_receiver_id, core, mm_reader_args);    // RISCV_0_default
++                    program, *mm_reader_kernel_in0_sender_in1_receiver_id, core, mm_reader_args);   // RISCV_0_default
+                 tt_metal::SetRuntimeArgs(program, unary_writer_kernel_noc1_id, core, writer_args);  // RISCV_1_default
+             } else if (core_idx_x != 0 and core_idx_y == 0) {
+                 tt_metal::SetRuntimeArgs(
+-                    program, mm_reader_kernel_in0_receiver_in1_sender_id, core, mm_reader_args);    // RISCV_1_default
+-                tt_metal::SetRuntimeArgs(program, unary_writer_kernel_noc0_id, core, writer_args);  // RISCV_0_default
++                    program, *mm_reader_kernel_in0_receiver_in1_sender_id, core, mm_reader_args);   // RISCV_1_default
++                tt_metal::SetRuntimeArgs(program, *unary_writer_kernel_noc0_id, core, writer_args);  // RISCV_0_default
+             } else {
+                 tt_metal::SetRuntimeArgs(
+-                    program, mm_reader_kernel_in0_receiver_in1_receiver_id, core, mm_reader_args);  // RISCV_1_default
+-                tt_metal::SetRuntimeArgs(program, unary_writer_kernel_noc0_id, core, writer_args);  // RISCV_0_default
++                    program, *mm_reader_kernel_in0_receiver_in1_receiver_id, core, mm_reader_args);  // RISCV_1_default
++                tt_metal::SetRuntimeArgs(program, *unary_writer_kernel_noc0_id, core, writer_args);  // RISCV_0_default
+             }
+         }
+     }
+@@ -464,9 +495,9 @@ int main() {
+         // NOTE: Maximum number of tiles in output is 120 * 16^2 = 30,720 (eg. [1, 1, 5120, 6144])
+ 
+         /* Create source data */
+-        constexpr uint32_t M = 3584;  // user-defined
+-        constexpr uint32_t N = 3072;  // user-defined
+-        constexpr uint32_t K = 768;   // user-defined
++        constexpr uint32_t M = 512;   // user-defined
++        constexpr uint32_t N = 512;   // user-defined
++        constexpr uint32_t K = 512;   // user-defined
+         constexpr uint32_t B = 1;     // user-defined
+ 
+         uint32_t Mt = M / TILE_HEIGHT;
+diff --git a/tt_metal/programming_examples/matmul/matmul_single_core/matmul_single_core.cpp b/tt_metal/programming_examples/matmul/matmul_single_core/matmul_single_core.cpp
+index 606b641589..c9d4622194 100644
+--- a/tt_metal/programming_examples/matmul/matmul_single_core/matmul_single_core.cpp
++++ b/tt_metal/programming_examples/matmul/matmul_single_core/matmul_single_core.cpp
+@@ -191,9 +191,9 @@ int main() {
+         std::shared_ptr<distributed::MeshDevice> mesh_device = distributed::MeshDevice::create_unit_mesh(device_id);
+ 
+         // parameters for the matrix multiplication
+-        constexpr uint32_t M = 640;  // user-defined
+-        constexpr uint32_t N = 640;  // user-defined
+-        constexpr uint32_t K = 640;  // user-defined
++        constexpr uint32_t M = 128;  // user-defined
++        constexpr uint32_t N = 128;  // user-defined
++        constexpr uint32_t K = 128;  // user-defined
+ 
+         static_assert(M % TILE_HEIGHT == 0, "M must be divisible by TILE_HEIGHT");
+         static_assert(N % TILE_WIDTH == 0, "N must be divisible by TILE_WIDTH");
+diff --git a/tt_metal/third_party/umd b/tt_metal/third_party/umd
+index a0c988a5b8..f5fd67ab44 160000
+--- a/tt_metal/third_party/umd
++++ b/tt_metal/third_party/umd
+@@ -1 +1 @@
+-Subproject commit a0c988a5b83af1d7260172c12f357332d97d8f4f
++Subproject commit f5fd67ab445df7171945bf34aeed617271bc3d36-dirty
+diff --git a/ttnn/cpp/ttnn/operations/matmul/device/kernels/compute/bmm_large_block_zm_fused_bias_activation.cpp b/ttnn/cpp/ttnn/operations/matmul/device/kernels/compute/bmm_large_block_zm_fused_bias_activation.cpp
+index bfeb8fe393..f8ea43a36f 100644
+--- a/ttnn/cpp/ttnn/operations/matmul/device/kernels/compute/bmm_large_block_zm_fused_bias_activation.cpp
++++ b/ttnn/cpp/ttnn/operations/matmul/device/kernels/compute/bmm_large_block_zm_fused_bias_activation.cpp
+@@ -14,6 +14,7 @@
+ #include "api/compute/bcast.h"
+ #endif
+ 
++#include "api/debug/dprint.h"
+ #include "api/compute/eltwise_unary/sfpu_split_includes.h"
+ 
+ // Please update
+@@ -200,6 +201,20 @@ void kernel_main() {
+ 
+     constexpr bool spill = num_blocks_inner_dim > 1;
+ 
++    DPRINT_MATH(
++        DPRINT << "[bmm_fused] kernel_start in0_block_w=" << in0_block_w
++               << " in0_num_subblocks=" << in0_num_subblocks
++               << " in1_num_subblocks=" << in1_num_subblocks
++               << " num_blocks_inner_dim=" << num_blocks_inner_dim
++               << " num_blocks_w_dim=" << num_blocks_w_dim
++               << " num_blocks_h_dim=" << num_blocks_h_dim
++               << " out_subblock_h=" << out_subblock_h
++               << " out_subblock_w=" << out_subblock_w
++               << " batch=" << batch
++               << " spill=" << static_cast<uint32_t>(spill)
++               << ENDL();
++    )
++
+     mm_block_init(
+         in0_cb_id, in1_cb_id, mm_partials_cb_id, in1_transpose_tile, out_subblock_w, out_subblock_h, in0_block_w);
+     for (uint32_t b = 0; b < batch; b++) {
+@@ -216,6 +231,12 @@ void kernel_main() {
+ 
+         for (uint32_t bh = 0; bh < num_blocks_h_dim; ++bh) {
+             for (uint32_t bw = 0; bw < num_blocks_w_dim; ++bw) {
++                if (b == 0 && bh == 0 && bw == 0) {
++                    DPRINT_MATH(
++                        DPRINT << "[bmm_fused] enter_output_block bw=" << bw
++                               << " bh=" << bh << ENDL();
++                    )
++                }
+                 bool enable_reload = false;
+                 uint32_t out_num_tiles_to_wait = out_subblock_num_tiles;
+ 
+@@ -232,6 +253,7 @@ void kernel_main() {
+ 
+                 for (uint32_t block = 0; block < num_blocks_inner_dim; block++) {
+                     bool last_out = block == (num_blocks_inner_dim - 1);
++                    const bool trace_first_block = (b == 0 && bh == 0 && bw == 0 && block == 0);
+ // Configure packer once for pack out without Bias
+ #if not defined FUSE_BIAS and defined PACK_RELU
+                     if (last_out) {
+@@ -241,6 +263,11 @@ void kernel_main() {
+ #endif
+ 
+                     if constexpr (in0_transpose_tile) {
++                        if (trace_first_block) {
++                            DPRINT_MATH(
++                                DPRINT << "[bmm_fused] transpose_begin" << ENDL();
++                            )
++                        }
+                         transpose_wh_init_short(in0_transpose_cb_id);
+                         PACK((pack_reconfig_data_format(in0_cb_id)));
+ #ifdef PACKER_L1_ACC
+@@ -250,10 +277,26 @@ void kernel_main() {
+                         mm_block_init_short(
+                             in0_cb_id, in1_cb_id, in1_transpose_tile, out_subblock_w, out_subblock_h, in0_block_w);
+                         PACK((pack_reconfig_data_format(mm_partials_cb_id)));
++                        if (trace_first_block) {
++                            DPRINT_MATH(
++                                DPRINT << "[bmm_fused] transpose_done" << ENDL();
++                            )
++                        }
+                     }
+ 
++                    if (trace_first_block) {
++                        DPRINT_MATH(
++                            DPRINT << "[bmm_fused] wait_in0_in1 begin in0_tiles=" << in0_block_num_tiles
++                                   << " in1_tiles=" << in1_block_num_tiles << ENDL();
++                        )
++                    }
+                     cb_wait_front(in0_cb_id, in0_block_num_tiles);
+                     cb_wait_front(in1_cb_id, in1_block_num_tiles);
++                    if (trace_first_block) {
++                        DPRINT_MATH(
++                            DPRINT << "[bmm_fused] wait_in0_in1 done" << ENDL();
++                        )
++                    }
+ 
+                     int in0_index_subblock_offset = 0;
+                     for (uint32_t in0_subblock = 0; in0_subblock < in0_num_subblocks; in0_subblock++) {
+@@ -261,6 +304,11 @@ void kernel_main() {
+                         for (uint32_t in1_subblock = 0; in1_subblock < in1_num_subblocks; in1_subblock++) {
+                             tile_regs_acquire();
+                             if (enable_reload) {
++                                if (trace_first_block && in0_subblock == 0 && in1_subblock == 0) {
++                                    DPRINT_MATH(
++                                        DPRINT << "[bmm_fused] reload_begin" << ENDL();
++                                    )
++                                }
+                                 reload_from_cb_to_dst(
+                                     in0_cb_id,
+                                     in1_cb_id,
+@@ -270,6 +318,11 @@ void kernel_main() {
+                                     out_subblock_w,
+                                     out_subblock_h,
+                                     in0_block_w);
++                                if (trace_first_block && in0_subblock == 0 && in1_subblock == 0) {
++                                    DPRINT_MATH(
++                                        DPRINT << "[bmm_fused] reload_done" << ENDL();
++                                    )
++                                }
+                             }
+ 
+ #ifndef SKIP_COMPUTE
+@@ -279,6 +332,11 @@ void kernel_main() {
+                             uint32_t in0_index = in0_index_subblock_offset;  // offset into in0 block
+                             uint32_t in1_index = in1_index_subblock_offset;  // offset into in1 block
+                             // inner dim that we accumulate is the inner dim of in0/in1, which is in0_block_w
++                            if (trace_first_block && in0_subblock == 0 && in1_subblock == 0) {
++                                DPRINT_MATH(
++                                    DPRINT << "[bmm_fused] matmul_begin" << ENDL();
++                                )
++                            }
+                             for (uint32_t inner_dim_idx = 0; inner_dim_idx < in0_block_w; ++inner_dim_idx) {
+                                 // matmul outer product of (out_subblock_h x out_subblock_w) tiles that fill dst
+                                 // accumulation is done by iterating matmul_block across inner dim
+@@ -298,6 +356,11 @@ void kernel_main() {
+                                 in1_index += in1_block_w;  // to stride down by 1 need to stride by in_per_core_w
+                                                            // (should be called in1_block_w)
+                             }
++                            if (trace_first_block && in0_subblock == 0 && in1_subblock == 0) {
++                                DPRINT_MATH(
++                                    DPRINT << "[bmm_fused] matmul_done" << ENDL();
++                                )
++                            }
+ 
+ #endif  // SKIP_COMPUTE
+ 
+@@ -310,6 +373,11 @@ void kernel_main() {
+ #endif
+                                 tile_regs_commit();
+                                 // Pack out to output buffer
++                                if (trace_first_block && in0_subblock == 0 && in1_subblock == 0) {
++                                    DPRINT_MATH(
++                                        DPRINT << "[bmm_fused] pack_final_begin" << ENDL();
++                                    )
++                                }
+                                 cb_reserve_back(mm_out_cb_id, out_subblock_num_tiles);
+                                 tile_regs_wait();
+ 
+@@ -334,14 +402,30 @@ void kernel_main() {
+ 
+                                 tile_regs_release();
+                                 cb_push_back(mm_out_cb_id, out_subblock_num_tiles);
++                                if (trace_first_block && in0_subblock == 0 && in1_subblock == 0) {
++                                    DPRINT_MATH(
++                                        DPRINT << "[bmm_fused] pack_final_done" << ENDL();
++                                    )
++                                }
+ 
+                             } else {
+                                 tile_regs_commit();
+                                 // Wait for tiles in output buffer to be written out since interm and output share
+                                 // memory
+                                 if (block == 0) {
++                                    if (trace_first_block && in0_subblock == 0 && in1_subblock == 0) {
++                                        DPRINT_MATH(
++                                            DPRINT << "[bmm_fused] spill_wait_begin out_tiles=" << out_num_tiles_to_wait
++                                                   << ENDL();
++                                        )
++                                    }
+                                     cb_reserve_back(out_cb_id, out_num_tiles_to_wait);
+                                     out_num_tiles_to_wait += out_subblock_num_tiles;
++                                    if (trace_first_block && in0_subblock == 0 && in1_subblock == 0) {
++                                        DPRINT_MATH(
++                                            DPRINT << "[bmm_fused] spill_wait_done" << ENDL();
++                                        )
++                                    }
+                                 }
+                                 // Move partial result to interm buffer
+                                 cb_reserve_back(mm_partials_cb_id, out_subblock_num_tiles);
+@@ -364,6 +448,11 @@ void kernel_main() {
+ 
+                                 tile_regs_release();
+                                 cb_push_back(mm_partials_cb_id, out_subblock_num_tiles);
++                                if (trace_first_block && in0_subblock == 0 && in1_subblock == 0) {
++                                    DPRINT_MATH(
++                                        DPRINT << "[bmm_fused] spill_pack_done" << ENDL();
++                                    )
++                                }
+                             }
+ 
+                             in1_index_subblock_offset += out_subblock_w;
+@@ -402,6 +491,11 @@ void kernel_main() {
+                 }
+ 
+ #ifdef FUSE_BIAS
++                if (b == 0 && bh == 0 && bw == 0) {
++                    DPRINT_MATH(
++                        DPRINT << "[bmm_fused] fuse_bias_begin" << ENDL();
++                    )
++                }
+ #ifdef PACK_RELU
+                 // if last block we pack the final result with relu enabled
+                 PACK((llk_pack_relu_config(ReluType::ZERO_RELU)));
+@@ -460,6 +554,11 @@ void kernel_main() {
+                 if constexpr (num_blocks_w_dim > 1) {
+                     cb_pop_front(bias_cb_id, in1_block_w);
+                 }
++                if (b == 0 && bh == 0 && bw == 0) {
++                    DPRINT_MATH(
++                        DPRINT << "[bmm_fused] fuse_bias_done" << ENDL();
++                    )
++                }
+ #endif  // FUSE_BIAS
+                 if constexpr (untilize_out) {
+ #ifdef PACK_RELU
+@@ -497,4 +596,7 @@ void kernel_main() {
+             }
+         }
+     }
++    DPRINT_MATH(
++        DPRINT << "[bmm_fused] kernel_done" << ENDL();
++    )
+ }
+diff --git a/ttnn/cpp/ttnn/operations/matmul/device/kernels/dataflow/reader_bmm_tile_layout_in0_sender_padding.cpp b/ttnn/cpp/ttnn/operations/matmul/device/kernels/dataflow/reader_bmm_tile_layout_in0_sender_padding.cpp
+index fb7dfe7c26..486bd30beb 100644
+--- a/ttnn/cpp/ttnn/operations/matmul/device/kernels/dataflow/reader_bmm_tile_layout_in0_sender_padding.cpp
++++ b/ttnn/cpp/ttnn/operations/matmul/device/kernels/dataflow/reader_bmm_tile_layout_in0_sender_padding.cpp
+@@ -5,6 +5,7 @@
+ #include <stdint.h>
+ 
+ #include "api/dataflow/dataflow_api.h"
++#include "api/debug/dprint.h"
+ #include "hostdevcommon/common_values.hpp"
+ #include "ttnn/operations/ccl/kernel_common/worker_sync_utils.hpp"
+ #include "ttnn/operations/kernel_helper_functions/pad_tile.hpp"
+@@ -161,12 +162,17 @@ void kernel_main() {
+                 if constexpr (get_batch_from_reader) {
+ #ifndef SKIP_MCAST
+                     // First broadcast this to other cores
++                    DPRINT << "[in0_sender] batch_valid_wait_begin b=" << b << " bB=" << bB
++                           << " need=" << in0_mcast_num_dests << ENDL();
+                     noc_semaphore_wait(in0_mcast_sender_semaphore_addr_ptr, in0_mcast_num_dests);
++                    DPRINT << "[in0_sender] batch_valid_wait_done b=" << b << " bB=" << bB << ENDL();
+                     noc_semaphore_set(in0_mcast_sender_semaphore_addr_ptr, 0);
+                     noc_semaphore_set(in0_mcast_receiver_semaphore_addr_ptr, is_batch_valid ? VALID : IGNORE_BATCH);
+                     noc_semaphore_set_multicast(
+                         in0_mcast_receiver_semaphore_addr, in0_mcast_receiver_semaphore_noc_addr, in0_mcast_num_cores);
+                     noc_async_writes_flushed();
++                    DPRINT << "[in0_sender] batch_valid_flag_flushed b=" << b << " bB=" << bB
++                           << " is_valid=" << is_batch_valid << ENDL();
+                     // Reset the semaphore value to VALID
+                     noc_semaphore_set(in0_mcast_receiver_semaphore_addr_ptr, VALID);
+ #endif  // SKIP_MCAST
+@@ -283,7 +289,15 @@ void kernel_main() {
+                         // wait until all in0 mcast destinations have atomically incremented the in0 semaphore_addr
+                         // (i.e. its value should be in0_mcast_num_dests), then reset the semaphore_addr value back to
+                         // zero for the next block
++                        if (b == 0 && bB == 0 && bh == 0 && bw == 0 && block < 2) {
++                            DPRINT << "[in0_sender] block_wait_begin block=" << block
++                                   << " need=" << in0_mcast_num_dests
++                                   << " bytes=" << in0_block_size_bytes << ENDL();
++                        }
+                         noc_semaphore_wait(in0_mcast_sender_semaphore_addr_ptr, in0_mcast_num_dests);
++                        if (b == 0 && bB == 0 && bh == 0 && bw == 0 && block < 2) {
++                            DPRINT << "[in0_sender] block_wait_done block=" << block << ENDL();
++                        }
+                         noc_semaphore_set(in0_mcast_sender_semaphore_addr_ptr, 0);
+ 
+                         // Now we have the block in the CB address, we can mcast to dests!
+@@ -296,6 +310,9 @@ void kernel_main() {
+                             in0_block_size_bytes,
+                             in0_mcast_num_cores,
+                             true);
++                        if (b == 0 && bB == 0 && bh == 0 && bw == 0 && block < 2) {
++                            DPRINT << "[in0_sender] block_mcast_issued block=" << block << ENDL();
++                        }
+ 
+                         // Note: no need for write barrier, since these two multicasts are done on the same noc id, same
+                         // vc, same cmd_buf Also, this only works because we are setting VCs statically (using
+@@ -312,6 +329,9 @@ void kernel_main() {
+                             in0_mcast_receiver_semaphore_addr,
+                             in0_mcast_receiver_semaphore_noc_addr,
+                             in0_mcast_num_cores);
++                        if (b == 0 && bB == 0 && bh == 0 && bw == 0 && block < 2) {
++                            DPRINT << "[in0_sender] block_flag_issued block=" << block << ENDL();
++                        }
+ #endif  // SKIP_MCAST
+ 
+                         // Common for sharded and interleaved paths
+@@ -339,7 +359,9 @@ void kernel_main() {
+             in0_tensor_start_tile_id += MtKt;
+         }
+     }
++    DPRINT << "[in0_sender] final_write_barrier_begin" << ENDL();
+     noc_async_write_barrier();
++    DPRINT << "[in0_sender] final_write_barrier_done" << ENDL();
+     // For completeness, we empty the sparsity CB if it was reserved earlier
+     if constexpr (batchB > 0) {
+         cb_push_back(cb_id_sparsity, 1);

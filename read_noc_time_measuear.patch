@@ -1,0 +1,63 @@
+diff --git a/tt_metal/hw/inc/api/dataflow/dataflow_api.h b/tt_metal/hw/inc/api/dataflow/dataflow_api.h
+index ca4e4d4a8c..96e360cd48 100644
+--- a/tt_metal/hw/inc/api/dataflow/dataflow_api.h
++++ b/tt_metal/hw/inc/api/dataflow/dataflow_api.h
+@@ -28,6 +28,7 @@
+ #include "tools/profiler/kernel_profiler.hpp"
+ #include "internal/debug/sanitize.h"
+ #include "api/debug/assert.h"
++#include "api/debug/dprint.h"
+ 
+ #if !defined(KERNEL_BUILD)
+ // This file uses noc_mode, which isn't defined in the firmware build.
+@@ -549,6 +550,7 @@ inline void noc_async_read(
+     uint32_t size,
+     uint8_t noc = noc_index,
+     uint32_t read_req_vc = NOC_UNICAST_WRITE_VC) {
++    const uint64_t read_start = get_timestamp();
+     /*
+         Read requests - use static VC
+         Read responses - assigned VCs dynamically
+@@ -556,6 +558,7 @@ inline void noc_async_read(
+     if constexpr (enable_noc_tracing) {
+         RECORD_NOC_EVENT_WITH_ADDR(NocEventType::READ, dst_local_l1_addr, src_noc_addr, size, -1, false, noc);
+     }
++    const uint64_t trace_done = get_timestamp();
+ 
+     if constexpr (max_page_size <= NOC_MAX_BURST_SIZE) {
+         noc_async_read_one_packet<false>(src_noc_addr, dst_local_l1_addr, size, noc, read_req_vc);
+@@ -1055,6 +1058,7 @@ FORCE_INLINE void noc_async_read_page(
+     uint32_t dst_local_l1_addr,
+     uint32_t offset = 0,
+     uint8_t noc = noc_index) {
++    const uint64_t page_start = get_timestamp();
+     static_assert(
+         has_required_addrgen_traits_v<AddrGen>,
+         "AddrGen must have get_noc_addr() and either page_size or log_base_2_of_page_size member variable");
+@@ -1065,11 +1069,25 @@ FORCE_INLINE void noc_async_read_page(
+     } else {
+         page_size = (1 << addrgen.log_base_2_of_page_size);
+     }
++    const uint64_t page_size_done = get_timestamp();
+     if constexpr (enable_noc_tracing) {
+         RECORD_NOC_EVENT_WITH_ID(NocEventType::READ, dst_local_l1_addr, id, addrgen, offset, page_size, -1, false, noc);
+     }
++    const uint64_t trace_done = get_timestamp();
++    const uint64_t src_noc_addr = addrgen.get_noc_addr(id, offset, noc);
++    const uint64_t addr_done = get_timestamp();
+     noc_async_read<NOC_MAX_BURST_SIZE + 1, false>(
+-        addrgen.get_noc_addr(id, offset, noc), dst_local_l1_addr, page_size, noc);
++        src_noc_addr, dst_local_l1_addr, page_size, noc);
++    const uint64_t issue_done = get_timestamp();
++    DPRINT_DATA1(
++        DPRINT << "api noc_async_read_page id=" << id
++               << " dst=0x" << HEX() << dst_local_l1_addr << DEC()
++               << " size=" << page_size
++               << " page_size_cycles=" << (page_size_done - page_start)
++               << " trace_cycles=" << (trace_done - page_size_done)
++               << " addr_cycles=" << (addr_done - trace_done)
++               << " issue_cycles=" << (issue_done - addr_done)
++               << " total_cycles=" << (issue_done - page_start) << ENDL());
+ }
+ 
+ // clang-format off

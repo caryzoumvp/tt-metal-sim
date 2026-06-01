@@ -1,0 +1,263 @@
+diff --git a/ttnn/cpp/ttnn/operations/matmul/device/kernels/dataflow/reader_bmm_tile_layout_in0_sender_padding.cpp b/ttnn/cpp/ttnn/operations/matmul/device/kernels/dataflow/reader_bmm_tile_layout_in0_sender_padding.cpp
+index fb7dfe7c26..3b28a6ee60 100644
+--- a/ttnn/cpp/ttnn/operations/matmul/device/kernels/dataflow/reader_bmm_tile_layout_in0_sender_padding.cpp
++++ b/ttnn/cpp/ttnn/operations/matmul/device/kernels/dataflow/reader_bmm_tile_layout_in0_sender_padding.cpp
+@@ -4,6 +4,7 @@
+ 
+ #include <stdint.h>
+ 
++#include "api/debug/dprint.h"
+ #include "api/dataflow/dataflow_api.h"
+ #include "hostdevcommon/common_values.hpp"
+ #include "ttnn/operations/ccl/kernel_common/worker_sync_utils.hpp"
+@@ -93,6 +94,20 @@ void kernel_main() {
+     constexpr uint32_t in0_block_size_bytes = in0_block_num_tiles * in0_single_tile_size_bytes;
+     constexpr uint32_t one_tile = 1;
+ 
++#ifndef SKIP_MCAST
++    constexpr uint64_t in0_mcast_iterations = static_cast<uint64_t>(batch) * static_cast<uint64_t>(num_blocks_h_dim) *
++                                              static_cast<uint64_t>(num_blocks_w_dim) *
++                                              static_cast<uint64_t>(num_blocks_inner_dim);
++    constexpr uint64_t in0_expected_total_acks =
++        in0_mcast_iterations * static_cast<uint64_t>(in0_mcast_num_dests);
++    DPRINT << "[matmul/in0_sender] in0_mcast_num_cores=" << in0_mcast_num_cores
++           << " in0_mcast_num_dests=" << in0_mcast_num_dests
++           << " mcast_iterations=" << in0_mcast_iterations
++           << " expected_total_acks=" << in0_expected_total_acks
++           << " start=(" << in0_mcast_dest_noc_start_x << "," << in0_mcast_dest_noc_start_y
++           << ") end=(" << in0_mcast_dest_noc_end_x << "," << in0_mcast_dest_noc_end_y << ")" << ENDL();
++#endif
++
+ #ifdef IN0_SHARDED
+     // In case we need to send multiple blocks per shard, in0 sharded cb is cb2 and we extract the sub-blocks to cb0
+     constexpr uint32_t shard_read_stride = shard_width_in_tiles * in0_single_tile_size_bytes;
+@@ -139,6 +154,9 @@ void kernel_main() {
+ #ifdef IN0_SHARDED
+     uint32_t in0_start_address = get_write_ptr(cb_id_in0);
+ #endif  // IN0_SHARDED
++
++    uint32_t data_mcast_seq = 0;
++    uint32_t sem_mcast_seq = 0;
+ #endif  // SKIP_MCAST
+ 
+     uint32_t l1_write_addr_sparsity = 0;
+@@ -150,7 +168,17 @@ void kernel_main() {
+     for (uint32_t b = 0; b < batch; ++b) {
+         if constexpr (batchB > 0) {
+             noc_async_read_page(b, s_sparsity, l1_write_addr_sparsity);
++            DPRINT << "[matmul/in0_sender] read_barrier(start) phase=sparsity b=" << b
++                   << " noc=" << noc_index
++                   << " sw_acked=0x" << HEX() << noc_nonposted_writes_acked[noc_index]
++                   << " hw_acked=0x" << NOC_STATUS_READ_REG(noc_index, NIU_MST_WR_ACK_RECEIVED)
++                   << DEC() << ENDL();
+             noc_async_read_barrier();
++            DPRINT << "[matmul/in0_sender] read_barrier(end) phase=sparsity b=" << b
++                   << " noc=" << noc_index
++                   << " sw_acked=0x" << HEX() << noc_nonposted_writes_acked[noc_index]
++                   << " hw_acked=0x" << NOC_STATUS_READ_REG(noc_index, NIU_MST_WR_ACK_RECEIVED)
++                   << DEC() << ENDL();
+         }
+ 
+         for (uint32_t bB = 0; bB < batchB_lim; ++bB) {
+@@ -164,9 +192,28 @@ void kernel_main() {
+                     noc_semaphore_wait(in0_mcast_sender_semaphore_addr_ptr, in0_mcast_num_dests);
+                     noc_semaphore_set(in0_mcast_sender_semaphore_addr_ptr, 0);
+                     noc_semaphore_set(in0_mcast_receiver_semaphore_addr_ptr, is_batch_valid ? VALID : IGNORE_BATCH);
++                    const uint32_t batch_sem_seq = sem_mcast_seq++;
++                    DPRINT << "[matmul/in0_sender] sem_mcast(start) seq=" << batch_sem_seq
++                           << " phase=batch_valid b=" << b << " bB=" << bB
++                           << " valid=" << (is_batch_valid ? 1 : 0)
++                           << " num_cores=" << in0_mcast_num_cores << ENDL();
+                     noc_semaphore_set_multicast(
+                         in0_mcast_receiver_semaphore_addr, in0_mcast_receiver_semaphore_noc_addr, in0_mcast_num_cores);
++                    DPRINT << "[matmul/in0_sender] write_flush(start) phase=batch_valid seq=" << batch_sem_seq
++                           << " b=" << b << " bB=" << bB
++                           << " noc=" << noc_index
++                           << " sw_acked=0x" << HEX() << noc_nonposted_writes_acked[noc_index]
++                           << " hw_acked=0x" << NOC_STATUS_READ_REG(noc_index, NIU_MST_WR_ACK_RECEIVED)
++                           << DEC() << ENDL();
+                     noc_async_writes_flushed();
++                    DPRINT << "[matmul/in0_sender] write_flush(end) phase=batch_valid seq=" << batch_sem_seq
++                           << " b=" << b << " bB=" << bB
++                           << " noc=" << noc_index
++                           << " sw_acked=0x" << HEX() << noc_nonposted_writes_acked[noc_index]
++                           << " hw_acked=0x" << NOC_STATUS_READ_REG(noc_index, NIU_MST_WR_ACK_RECEIVED)
++                           << DEC() << ENDL();
++                    DPRINT << "[matmul/in0_sender] sem_mcast(end) seq=" << batch_sem_seq
++                           << " phase=batch_valid b=" << b << " bB=" << bB << ENDL();
+                     // Reset the semaphore value to VALID
+                     noc_semaphore_set(in0_mcast_receiver_semaphore_addr_ptr, VALID);
+ #endif  // SKIP_MCAST
+@@ -230,7 +277,23 @@ void kernel_main() {
+                                     noc_async_read_tile(in0_tensor_tile_id, s0, l1_write_addr_in0);
+ #else
+                                     noc_async_read_tile(in0_tensor_tile_id, s0, l1_write_addr_helper);
++                                    DPRINT << "[matmul/in0_sender] read_barrier(start) phase=intermediate_copy b=" << b
++                                           << " bB=" << bB
++                                           << " bh=" << bh << " bw=" << bw << " block=" << block
++                                           << " noc=" << noc_index
++                                           << " sw_acked=0x" << HEX() << noc_nonposted_writes_acked[noc_index]
++                                           << " hw_acked=0x"
++                                           << NOC_STATUS_READ_REG(noc_index, NIU_MST_WR_ACK_RECEIVED)
++                                           << DEC() << ENDL();
+                                     noc_async_read_barrier();
++                                    DPRINT << "[matmul/in0_sender] read_barrier(end) phase=intermediate_copy b=" << b
++                                           << " bB=" << bB
++                                           << " bh=" << bh << " bw=" << bw << " block=" << block
++                                           << " noc=" << noc_index
++                                           << " sw_acked=0x" << HEX() << noc_nonposted_writes_acked[noc_index]
++                                           << " hw_acked=0x"
++                                           << NOC_STATUS_READ_REG(noc_index, NIU_MST_WR_ACK_RECEIVED)
++                                           << DEC() << ENDL();
+                                     memcpy(
+                                         /*dst=*/reinterpret_cast<void*>(l1_write_addr_in0),
+                                         /*src=*/reinterpret_cast<const void*>(l1_write_addr_helper),
+@@ -241,7 +304,23 @@ void kernel_main() {
+                                 // Zero out padded regions for the very last tile
+                                 if constexpr (in0_last_ktile_w > 0) {
+                                     if ((block == num_blocks_inner_dim - 1) && (w == in0_block_w - 1)) {
++                                        DPRINT << "[matmul/in0_sender] read_barrier(start) phase=pad_last_ktile b=" << b
++                                               << " bB=" << bB
++                                               << " bh=" << bh << " bw=" << bw << " block=" << block
++                                               << " noc=" << noc_index
++                                               << " sw_acked=0x" << HEX() << noc_nonposted_writes_acked[noc_index]
++                                               << " hw_acked=0x"
++                                               << NOC_STATUS_READ_REG(noc_index, NIU_MST_WR_ACK_RECEIVED)
++                                               << DEC() << ENDL();
+                                         noc_async_read_barrier();
++                                        DPRINT << "[matmul/in0_sender] read_barrier(end) phase=pad_last_ktile b=" << b
++                                               << " bB=" << bB
++                                               << " bh=" << bh << " bw=" << bw << " block=" << block
++                                               << " noc=" << noc_index
++                                               << " sw_acked=0x" << HEX() << noc_nonposted_writes_acked[noc_index]
++                                               << " hw_acked=0x"
++                                               << NOC_STATUS_READ_REG(noc_index, NIU_MST_WR_ACK_RECEIVED)
++                                               << DEC() << ENDL();
+                                         const DataFormat in0_data_format = get_dataformat(cb_id_in0);
+                                         pad_last_ktile<in0_data_format, in0_last_ktile_w>(l1_write_addr_in0);
+                                     }
+@@ -255,7 +334,21 @@ void kernel_main() {
+                         in0_tensor_current_inner_dim_block_start_tile_id += in0_tensor_next_inner_dim_block_stride;
+ 
+                         // Barrier! make sure the reads are done
++                        DPRINT << "[matmul/in0_sender] read_barrier(start) phase=in0_block_done b=" << b
++                               << " bB=" << bB
++                               << " bh=" << bh << " bw=" << bw << " block=" << block
++                               << " noc=" << noc_index
++                               << " sw_acked=0x" << HEX() << noc_nonposted_writes_acked[noc_index]
++                               << " hw_acked=0x" << NOC_STATUS_READ_REG(noc_index, NIU_MST_WR_ACK_RECEIVED)
++                               << DEC() << ENDL();
+                         noc_async_read_barrier();
++                        DPRINT << "[matmul/in0_sender] read_barrier(end) phase=in0_block_done b=" << b
++                               << " bB=" << bB
++                               << " bh=" << bh << " bw=" << bw << " block=" << block
++                               << " noc=" << noc_index
++                               << " sw_acked=0x" << HEX() << noc_nonposted_writes_acked[noc_index]
++                               << " hw_acked=0x" << NOC_STATUS_READ_REG(noc_index, NIU_MST_WR_ACK_RECEIVED)
++                               << DEC() << ENDL();
+ #else
+                         if constexpr (extract_shard_sub_blocks) {
+                             uint32_t l1_write_addr_in0 = get_write_ptr(cb_id_in0);
+@@ -275,7 +368,21 @@ void kernel_main() {
+                             }
+ 
+                             in0_tensor_current_inner_dim_block_start_addr += shard_read_width;
++                            DPRINT << "[matmul/in0_sender] read_barrier(start) phase=in0_sharded_subblock b=" << b
++                                   << " bB=" << bB
++                                   << " bh=" << bh << " bw=" << bw << " block=" << block
++                                   << " noc=" << noc_index
++                                   << " sw_acked=0x" << HEX() << noc_nonposted_writes_acked[noc_index]
++                                   << " hw_acked=0x" << NOC_STATUS_READ_REG(noc_index, NIU_MST_WR_ACK_RECEIVED)
++                                   << DEC() << ENDL();
+                             noc_async_read_barrier();
++                            DPRINT << "[matmul/in0_sender] read_barrier(end) phase=in0_sharded_subblock b=" << b
++                                   << " bB=" << bB
++                                   << " bh=" << bh << " bw=" << bw << " block=" << block
++                                   << " noc=" << noc_index
++                                   << " sw_acked=0x" << HEX() << noc_nonposted_writes_acked[noc_index]
++                                   << " hw_acked=0x" << NOC_STATUS_READ_REG(noc_index, NIU_MST_WR_ACK_RECEIVED)
++                                   << DEC() << ENDL();
+                         }
+ #endif  // IN0_SHARDED
+ 
+@@ -288,6 +395,14 @@ void kernel_main() {
+ 
+                         // Now we have the block in the CB address, we can mcast to dests!
+                         uint64_t in0_multicast_data_addr = in0_multicast_data_noc | in0_start_address;
++                        const uint32_t data_seq = data_mcast_seq++;
++                        DPRINT << "[matmul/in0_sender] data_mcast(start) seq=" << data_seq
++                               << " b=" << b << " bB=" << bB
++                               << " bh=" << bh << " bw=" << bw << " block=" << block
++                               << " num_cores=" << in0_mcast_num_cores
++                               << " src_l1=0x" << HEX() << in0_start_address
++                               << " dst_noc=0x" << in0_multicast_data_addr
++                               << DEC() << ENDL();
+ 
+                         // num_dests must not include source, since we are NOT really doing a local copy!
+                         noc_async_write_multicast(
+@@ -296,6 +411,9 @@ void kernel_main() {
+                             in0_block_size_bytes,
+                             in0_mcast_num_cores,
+                             true);
++                        DPRINT << "[matmul/in0_sender] data_mcast(end) seq=" << data_seq
++                               << " b=" << b << " bB=" << bB
++                               << " bh=" << bh << " bw=" << bw << " block=" << block << ENDL();
+ 
+                         // Note: no need for write barrier, since these two multicasts are done on the same noc id, same
+                         // vc, same cmd_buf Also, this only works because we are setting VCs statically (using
+@@ -303,15 +421,37 @@ void kernel_main() {
+ #ifdef ARCH_BLACKHOLE
+                         // On Blackhole the flush is needed because NoC latency is higherthan L1 <-> RISCV
+                         // latency which means data could be changed before write is issued.
++                        DPRINT << "[matmul/in0_sender] write_flush(start) phase=block_done seq=" << data_seq
++                               << " b=" << b << " bB=" << bB
++                               << " bh=" << bh << " bw=" << bw << " block=" << block
++                               << " noc=" << noc_index
++                               << " sw_acked=0x" << HEX() << noc_nonposted_writes_acked[noc_index]
++                               << " hw_acked=0x" << NOC_STATUS_READ_REG(noc_index, NIU_MST_WR_ACK_RECEIVED)
++                               << DEC() << ENDL();
+                         noc_async_writes_flushed();
++                        DPRINT << "[matmul/in0_sender] write_flush(end) phase=block_done seq=" << data_seq
++                               << " b=" << b << " bB=" << bB
++                               << " bh=" << bh << " bw=" << bw << " block=" << block
++                               << " noc=" << noc_index
++                               << " sw_acked=0x" << HEX() << noc_nonposted_writes_acked[noc_index]
++                               << " hw_acked=0x" << NOC_STATUS_READ_REG(noc_index, NIU_MST_WR_ACK_RECEIVED)
++                               << DEC() << ENDL();
+ #endif  // ARCH_BLACKHOLE
+ 
+                         // We should also multicast the flag to destinations
+                         // num_dests must not include source, since we are NOT really doing a local copy!
++                        const uint32_t sem_seq = sem_mcast_seq++;
++                        DPRINT << "[matmul/in0_sender] sem_mcast(start) seq=" << sem_seq
++                               << " phase=block_done b=" << b << " bB=" << bB
++                               << " bh=" << bh << " bw=" << bw << " block=" << block
++                               << " num_cores=" << in0_mcast_num_cores << ENDL();
+                         noc_semaphore_set_multicast(
+                             in0_mcast_receiver_semaphore_addr,
+                             in0_mcast_receiver_semaphore_noc_addr,
+                             in0_mcast_num_cores);
++                        DPRINT << "[matmul/in0_sender] sem_mcast(end) seq=" << sem_seq
++                               << " phase=block_done b=" << b << " bB=" << bB
++                               << " bh=" << bh << " bw=" << bw << " block=" << block << ENDL();
+ #endif  // SKIP_MCAST
+ 
+                         // Common for sharded and interleaved paths
+@@ -339,7 +479,17 @@ void kernel_main() {
+             in0_tensor_start_tile_id += MtKt;
+         }
+     }
++    DPRINT << "[matmul/in0_sender] write_barrier(start) phase=final"
++           << " noc=" << noc_index
++           << " sw_acked=0x" << HEX() << noc_nonposted_writes_acked[noc_index]
++           << " hw_acked=0x" << NOC_STATUS_READ_REG(noc_index, NIU_MST_WR_ACK_RECEIVED)
++           << DEC() << ENDL();
+     noc_async_write_barrier();
++    DPRINT << "[matmul/in0_sender] write_barrier(end) phase=final"
++           << " noc=" << noc_index
++           << " sw_acked=0x" << HEX() << noc_nonposted_writes_acked[noc_index]
++           << " hw_acked=0x" << NOC_STATUS_READ_REG(noc_index, NIU_MST_WR_ACK_RECEIVED)
++           << DEC() << ENDL();
+     // For completeness, we empty the sparsity CB if it was reserved earlier
+     if constexpr (batchB > 0) {
+         cb_push_back(cb_id_sparsity, 1);
