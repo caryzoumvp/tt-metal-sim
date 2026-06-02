@@ -194,6 +194,13 @@ void JitBuildEnv::init(
         }
         this->defines_ += "-DPROFILE_NOC_EVENTS=1 ";
     }
+
+    // wormhole_sim profile log: route WAYPOINT and NoC events into an MMIO
+    // trap that TensixMMIO turns into per-tile CSV rows. Harmless on real
+    // silicon (writes go to unmapped MMIO), so kept unconditional. Each
+    // event-emission site is still gated by its own enable (WATCHER_ENABLED
+    // for waypoint, PROFILE_NOC_EVENTS for NoC events).
+    this->defines_ += "-DSIM_PROFILE_LOG=1 ";
     if (rtoptions.get_experimental_noc_debug_dump_enabled()) {
         this->defines_ += "-DDEVICE_DEBUG_DUMP=1 ";
     }
