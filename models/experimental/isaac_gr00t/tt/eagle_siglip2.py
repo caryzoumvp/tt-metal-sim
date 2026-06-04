@@ -181,6 +181,8 @@ class TtSigLIP2Encoder:
         v_tt = self._t(f"{pfx}.v.perm",   ttnn.permute, v_tt, (0, 2, 1, 3))
 
         # Scaled QK^T: [1, H, N, N]
+        # Note: HEAD_DIM=72 is not tile-aligned (not a multiple of 32), so
+        # ttnn.transformer.scaled_dot_product_attention cannot be used here.
         scale  = 1.0 / math.sqrt(HEAD_DIM)
         k_t    = self._t(f"{pfx}.k.t",       ttnn.permute,  k_tt, (0, 1, 3, 2))
         scores = self._t(f"{pfx}.qk.matmul", ttnn.matmul,   q_tt, k_t)

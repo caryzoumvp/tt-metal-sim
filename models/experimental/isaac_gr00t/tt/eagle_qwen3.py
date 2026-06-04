@@ -233,22 +233,13 @@ class TtQwen3Decoder:
                 (1, NUM_HEADS, n, HEAD_DIM), (1, NUM_HEADS, n, HEAD_DIM),
             )
 
-        # ── 4. Scaled dot-product attention in TTNN ───────────────────────────
-        scale  = 1.0 / math.sqrt(HEAD_DIM)
-        k_t    = self._t(f"{pfx}.k.t",       ttnn.permute,  k_tt, (0, 1, 3, 2))
-        scores = self._t(f"{pfx}.qk.matmul", ttnn.matmul,   q_tt, k_t)
-        scores = self._t(f"{pfx}.qk.scale",  ttnn.multiply, scores, scale)
+        # ── 4. Fused causal flash-attention (is_causal=True applies upper-tri mask) ──
+        scale   = 1.0 / math.sqrt(HEAD_DIM)
+        ctx_tt  = self._t(f"{pfx}.sdpa", ttnn.transformer.scaled_dot_product_attention,
+                          q_tt, k_tt, v_tt, is_causal=True, scale=scale)
 
-        # Causal mask: -inf above diagonal, 0 on/below
-        mask_np = np.triu(np.full((n, n), float("-inf"), dtype=np.float32), k=1)
-        mask_tt = _tt(mask_np.reshape(1, 1, n, n), self.device) # [1, 1, N, N]
-        scores  = self._t(f"{pfx}.qk.mask",  ttnn.add,     scores, mask_tt)
-        probs   = self._t(f"{pfx}.softmax",  ttnn.softmax, scores, dim=-1)
-
-        ctx_tt  = self._t(f"{pfx}.pv.matmul",   ttnn.matmul, probs, v_tt)
-
-        # ── 5. Merge heads in TTNN ────────────────────────────────────────────
-        ctx_tt = self._t(f"{pfx}.ctx.perm",    ttnn.permute, ctx_tt, (0, 2, 1, 3))
+        # ── 5. Merge heads: [1, H, N, head_dim] → [1, 1, N, 2048] → [1, N, 2048] ──
+        ctx_tt = self._t(f"{pfx}.ctx.concat_heads", ttnn.experimental.nlp_concat_heads, ctx_tt)
         ctx_tt = self._t(f"{pfx}.ctx.reshape", ttnn.reshape, ctx_tt, (1, n, HIDDEN_SIZE))
 
         # ── 6. Output projection in TTNN ──────────────────────────────────────
