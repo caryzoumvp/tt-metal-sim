@@ -102,9 +102,9 @@ def test_linear(act_shape, w_shape, device, sim_timer):
 
     tt_a = _upload(a, device)
     tt_w = _upload(w, device)
-    tt_out = sim_timer("matmul", ttnn.matmul, tt_a, tt_w)
-    out = _download(tt_out)
-
+    out = sim_timer("matmul",
+                    lambda: _download(ttnn.matmul(tt_a, tt_w)),
+                    in_shapes=str([act_shape, w_shape]))
     assert_with_pcc(ref, out, PCC_MATMUL)
 
 
@@ -137,9 +137,9 @@ def test_batched_matmul(a_shape, b_shape, device, sim_timer):
 
     tt_a = _upload(a, device)
     tt_b = _upload(b, device)
-    tt_out = sim_timer("matmul", ttnn.matmul, tt_a, tt_b)
-    out = _download(tt_out)
-
+    out = sim_timer("matmul",
+                    lambda: _download(ttnn.matmul(tt_a, tt_b)),
+                    in_shapes=str([a_shape, b_shape]))
     assert_with_pcc(ref, out, PCC_MATMUL)
 
 
@@ -158,9 +158,9 @@ def test_softmax(shape, device, sim_timer):
     ref = torch.softmax(a, dim=-1)
 
     tt_a = _upload(a, device)
-    tt_out = sim_timer("softmax", ttnn.softmax, tt_a, dim=-1)
-    out = _download(tt_out)
-
+    out = sim_timer("softmax",
+                    lambda: _download(ttnn.softmax(tt_a, dim=-1)),
+                    in_shapes=str([shape]))
     assert_with_pcc(ref, out, PCC_ELTWISE)
 
 
@@ -187,9 +187,9 @@ def test_layer_norm(shape, normalized_shape, device, sim_timer):
     tt_a = _upload(a, device)
     tt_w = ttnn.from_torch(w, layout=ttnn.TILE_LAYOUT, device=device, dtype=ttnn.bfloat16)
     tt_b = ttnn.from_torch(b, layout=ttnn.TILE_LAYOUT, device=device, dtype=ttnn.bfloat16)
-    tt_out = sim_timer("layer_norm", ttnn.layer_norm, tt_a, weight=tt_w, bias=tt_b)
-    out = _download(tt_out)
-
+    out = sim_timer("layer_norm",
+                    lambda: _download(ttnn.layer_norm(tt_a, weight=tt_w, bias=tt_b)),
+                    in_shapes=str([shape, normalized_shape]))
     assert_with_pcc(ref, out, PCC_ELTWISE)
 
 
@@ -211,9 +211,9 @@ def test_add(shape, device, sim_timer):
 
     tt_a = _upload(a, device)
     tt_b = _upload(b, device)
-    tt_out = sim_timer("add", ttnn.add, tt_a, tt_b)
-    out = _download(tt_out)
-
+    out = sim_timer("add",
+                    lambda: _download(ttnn.add(tt_a, tt_b)),
+                    in_shapes=str([shape, shape]))
     assert_with_pcc(ref, out, PCC_ELTWISE)
 
 
@@ -235,9 +235,9 @@ def test_multiply(shape, device, sim_timer):
 
     tt_a = _upload(a, device)
     tt_b = _upload(b, device)
-    tt_out = sim_timer("multiply", ttnn.multiply, tt_a, tt_b)
-    out = _download(tt_out)
-
+    out = sim_timer("multiply",
+                    lambda: _download(ttnn.multiply(tt_a, tt_b)),
+                    in_shapes=str([shape, shape]))
     assert_with_pcc(ref, out, PCC_ELTWISE)
 
 
@@ -256,9 +256,9 @@ def test_silu(shape, device, sim_timer):
     ref = torch.nn.functional.silu(a)
 
     tt_a = _upload(a, device)
-    tt_out = sim_timer("silu", ttnn.silu, tt_a)
-    out = _download(tt_out)
-
+    out = sim_timer("silu",
+                    lambda: _download(ttnn.silu(tt_a)),
+                    in_shapes=str([shape]))
     assert_with_pcc(ref, out, PCC_ELTWISE)
 
 
@@ -272,9 +272,9 @@ def test_gelu(shape, device, sim_timer):
     ref = torch.nn.functional.gelu(a)
 
     tt_a = _upload(a, device)
-    tt_out = sim_timer("gelu", ttnn.gelu, tt_a)
-    out = _download(tt_out)
-
+    out = sim_timer("gelu",
+                    lambda: _download(ttnn.gelu(tt_a)),
+                    in_shapes=str([shape]))
     assert_with_pcc(ref, out, PCC_ELTWISE)
 
 
@@ -287,9 +287,9 @@ def test_relu(shape, device, sim_timer):
     ref = torch.nn.functional.relu(a)
 
     tt_a = _upload(a, device)
-    tt_out = sim_timer("relu", ttnn.relu, tt_a)
-    out = _download(tt_out)
-
+    out = sim_timer("relu",
+                    lambda: _download(ttnn.relu(tt_a)),
+                    in_shapes=str([shape]))
     assert_with_pcc(ref, out, PCC_ELTWISE)
 
 
@@ -325,9 +325,9 @@ def test_permute(shape, perm, device, sim_timer):
     ref = a.permute(perm).contiguous()
 
     tt_a = _upload(a, device)
-    tt_out = sim_timer("permute", ttnn.permute, tt_a, perm)
-    out = _download(tt_out)
-
+    out = sim_timer("permute",
+                    lambda: _download(ttnn.permute(tt_a, perm)),
+                    in_shapes=str([shape]))
     assert_with_pcc(ref, out, PCC_ELTWISE)
 
 
@@ -377,9 +377,9 @@ def test_reshape(in_shape, out_shape, device, sim_timer):
     ref = a.reshape(out_shape)
 
     tt_a = _upload(a, device)
-    tt_out = sim_timer("reshape", ttnn.reshape, tt_a, out_shape)
-    out = _download(tt_out)
-
+    out = sim_timer("reshape",
+                    lambda: _download(ttnn.reshape(tt_a, out_shape)),
+                    in_shapes=str([in_shape]))
     assert_with_pcc(ref, out, PCC_ELTWISE)
 
 
@@ -399,9 +399,9 @@ def test_concat(shapes, dim, device, sim_timer):
     ref = torch.cat(tensors, dim=dim)
 
     tt_tensors = [_upload(t, device) for t in tensors]
-    tt_out = sim_timer("concat", ttnn.concat, tt_tensors, dim)
-    out = _download(tt_out)
-
+    out = sim_timer("concat",
+                    lambda: _download(ttnn.concat(tt_tensors, dim)),
+                    in_shapes=str(shapes))
     assert_with_pcc(ref, out, PCC_ELTWISE)
 
 
@@ -418,9 +418,9 @@ def test_repeat(shape, repeats, dim, device, sim_timer):
     ref = a.expand(repeats) if dim is None else a.repeat_interleave(repeats, dim=dim)
 
     tt_a = _upload(a, device)
-    tt_out = sim_timer("repeat", ttnn.repeat, tt_a, ttnn.Shape(repeats))
-    out = _download(tt_out)
-
+    out = sim_timer("repeat",
+                    lambda: _download(ttnn.repeat(tt_a, ttnn.Shape(repeats))),
+                    in_shapes=str([shape]))
     assert_with_pcc(ref, out, PCC_ELTWISE)
 
 
@@ -437,9 +437,10 @@ def test_split(shape, chunks, dim, device, sim_timer):
     ref_parts = torch.chunk(a, chunks, dim=dim)
 
     tt_a = _upload(a, device)
-    # split returns a list; time the whole call, download each part separately
-    tt_parts = sim_timer("split", ttnn.split, tt_a, a.shape[dim] // chunks, dim)
-    parts = [_download(p) for p in tt_parts]
+    # split returns a list; download all parts inside the timer so END marks after sync
+    parts = sim_timer("split",
+                      lambda: [_download(p) for p in ttnn.split(tt_a, a.shape[dim] // chunks, dim)],
+                      in_shapes=str([shape]))
 
     for ref, got in zip(ref_parts, parts):
         assert_with_pcc(ref, got, PCC_ELTWISE)

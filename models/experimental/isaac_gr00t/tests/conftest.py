@@ -6,29 +6,28 @@ pytest configuration for GR00T op tests.
 --sim flag
 ----------
 When passed, each test sends phase-encoded profile markers to gem5 via
-CMD_PROFILE_MARK before and after every TTNN op call.
+CMD_WRITE_REG(PROFILE_MARK_ADDR) before and after every TTNN op call.
 
-Socket usage — connect-send-close per marker
---------------------------------------------
-TensixDbgServer accepts only ONE client at a time.  Holding a persistent
-connection would evict the tt-metal kernel-dispatch connection and hang the
-sim.  Instead, each _send_mark() opens a short-lived connection:
+The markers must bracket:  ttnn.op()  AND  the subsequent _download() call.
+ttnn.op() only enqueues the go signal (async dispatch, returns immediately).
+The kernel actually executes in gem5 after that.  _download() (ttnn.to_torch)
+forces synchronisation — it blocks until all queued kernels finish, then reads
+result tiles back.  So the correct window is:
 
-  1. connect to /tmp/tt_sim.sock
-  2. send [cmd:1][value:4 LE][0:4]
-  3. recv RESP_OK (1 byte)
-  4. close
+    START marker
+    tt_out = ttnn.op(...)      ← enqueue only
+    out    = _download(tt_out) ← wait for kernel done + read result
+    END marker
 
-This is safe because Python is single-threaded: before ttnn.op() is called,
-tt-metal has no active socket connection (previous kernel already finished and
-disconnected), and after ttnn.op() returns the same is true.
+Tests must pass a lambda that bundles op + _download to sim_timer:
 
-Wire format
------------
-  value = (phase << 24) | (seq_num & 0x00FFFFFF)
-  phase 0xF0 = HOST_OP_START, 0xF1 = HOST_OP_END
-  seq_num = monotone counter; matches `payload` in profile_mark_host.csv
-            and `seq_num` in profile_mark_host_labels.csv
+    out = sim_timer("matmul", lambda: _download(ttnn.matmul(tt_a, tt_w)))
+
+Socket usage
+------------
+TensixDbgServer accepts only ONE client at a time on /tmp/tt_marker.sock.
+Each _send_mark() uses a short-lived connection so it does not evict the
+tt-metal kernel-dispatch connection on /tmp/tt_sim.sock.
 
 Output files
 ------------
@@ -47,30 +46,18 @@ import pytest
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 HOST_US_PER_SIM_CYCLE = 681.0
-# Dedicated marker socket — separate from tt-metal's kernel-dispatch socket.
-# WormholeDbgServer starts a second listener on this path.
 MARKER_SOCKET_PATH = "/tmp/tt_marker.sock"
-# gem5 always writes m5out/ relative to its working directory (wormhole_sim).
-# Override via GEM5_M5OUT env var if the sim is run from a different directory.
 M5OUT_DIR = os.environ.get("GEM5_M5OUT", "/workspaces/wormhole_sim/m5out")
 
-# CMD_WRITE_REG (0x02) to PROFILE_MARK_ADDR: same encoding as RISC-V MMIO write.
-# Frame: [cmd:1][addr:4][size=4:4][value:4]
 CMD_WRITE_REG     = 0x02
 PROFILE_MARK_ADDR = 0xFFB80200
 RESP_OK           = 0x00
 
-HOST_OP_START = 0xF0   # docs/profile.md
+HOST_OP_START = 0xF0
 HOST_OP_END   = 0xF1
 
 
-# ── Marker socket — persistent, one connection per session ────────────────────
-
 def _connect_marker_socket() -> socket.socket:
-    """
-    Connect to the dedicated marker socket.  Fatal if not available — the sim
-    must be running before tests start when --sim is passed.
-    """
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
         s.connect(MARKER_SOCKET_PATH)
@@ -78,25 +65,20 @@ def _connect_marker_socket() -> socket.socket:
         s.close()
         raise SystemExit(
             f"\n[sim] FATAL: cannot connect to marker socket {MARKER_SOCKET_PATH}: {e}\n"
-            f"  Make sure gem5 is running (bash run_gem5_big.sh) and fully started\n"
-            f"  before running pytest --sim.\n"
+            f"  Make sure gem5 is running (bash run_gem5_big.sh) before pytest --sim.\n"
         )
-    # Verify with a ping
-    s.sendall(struct.pack('<BII', 0xFF, 0, 0))   # CMD_PING, addr=0, size=0
+    s.sendall(struct.pack('<BII', 0xFF, 0, 0))
     resp = s.recv(1)
     if resp[0] != RESP_OK:
         s.close()
-        raise SystemExit(
-            f"[sim] FATAL: marker socket ping failed (response=0x{resp[0]:02x})"
-        )
+        raise SystemExit(f"[sim] FATAL: marker socket ping failed (response=0x{resp[0]:02x})")
     return s
 
 
 def _send_mark(sock: socket.socket, phase: int, seq_num: int) -> None:
-    """Write one CMD_WRITE_REG(PROFILE_MARK_ADDR) on the persistent connection."""
     value = ((phase & 0xFF) << 24) | (seq_num & 0x00FFFFFF)
     sock.sendall(struct.pack('<BIII', CMD_WRITE_REG, PROFILE_MARK_ADDR, 4, value))
-    sock.recv(1)   # consume RESP_OK
+    sock.recv(1)
 
 
 # ── Session fixtures ──────────────────────────────────────────────────────────
@@ -117,15 +99,10 @@ def pytest_addoption(parser):
 
 @pytest.fixture(scope="session")
 def sim_log(request):
-    """
-    Yields (records, socket_path, labels_writer, labels_fh).
-    labels file is written incrementally and flushed per row.
-    """
     if not request.config.getoption("--sim"):
         yield None, None, None, None
         return
 
-    # Connect once — fatal if the sim isn't running
     sock = _connect_marker_socket()
     print(f"\n[sim] Connected to marker socket {MARKER_SOCKET_PATH}")
 
@@ -146,11 +123,7 @@ def sim_log(request):
     out_path = os.path.join(os.getcwd(), "gr00t_ops_sim_baseline.csv")
     with open(out_path, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow([
-            "seq_num", "test", "op_name",
-            "in_shapes", "out_shape",
-            "wall_ms", "est_sim_kcy",
-        ])
+        writer.writerow(["seq_num", "test", "op_name", "in_shapes", "out_shape", "wall_ms", "est_sim_kcy"])
         writer.writerows(records)
 
     print(f"\n[sim] {len(records)} ops → {out_path}")
@@ -164,14 +137,14 @@ class SimTimer:
     """
     Callable wrapper injected via the sim_timer fixture.
 
-    sim_timer("matmul", ttnn.matmul, tt_a, tt_w)
+    Usage — bundle op AND download into the function so markers bracket
+    the full kernel execution, not just the async enqueue:
 
-    When --sim is active:
-      1. connect → send HOST_OP_START(seq) → close
-      2. call fn(...)            [blocks until sim kernel finishes]
-      3. connect → send HOST_OP_END(seq)   → close
-      4. append row to labels CSV (flushed immediately)
-      5. append wall-clock row to records list
+        out = sim_timer("matmul", lambda: _download(ttnn.matmul(tt_a, tt_w)))
+
+    Optional kwargs forwarded to the label CSV:
+        in_shapes  (str)  — pre-computed input shape string
+        out_shape  (str)  — pre-computed output shape string
     """
 
     _seq = 0
@@ -183,28 +156,34 @@ class SimTimer:
         self._labels_fh     = labels_fh
         self._test_id       = test_id
 
-    def __call__(self, op_name: str, fn, *args, **kwargs):
+    def __call__(self, op_name: str, fn, *args,
+                 in_shapes: str = "", out_shape: str = "", **kwargs):
         if self._records is None:
-            return fn(*args, **kwargs)
+            result = fn(*args, **kwargs)
+            return result
 
         SimTimer._seq += 1
         seq = SimTimer._seq
 
         _send_mark(self._sock, HOST_OP_START, seq)
 
-        t0     = perf_counter_ns()
-        result = fn(*args, **kwargs)
+        t0      = perf_counter_ns()
+        result  = fn(*args, **kwargs)
         wall_ms = (perf_counter_ns() - t0) / 1e6
 
         _send_mark(self._sock, HOST_OP_END, seq)
 
-        in_shapes = str([tuple(a.shape) for a in args if hasattr(a, "shape")])
-        out_shape = str(tuple(result.shape)) if hasattr(result, "shape") else ""
-        est_kcy   = int(wall_ms * 1_000 / HOST_US_PER_SIM_CYCLE)
+        # Shape strings: use caller-supplied overrides if provided,
+        # else fall back to inspecting *args (legacy path).
+        if not in_shapes:
+            in_shapes = str([tuple(a.shape) for a in args if hasattr(a, "shape")])
+        if not out_shape:
+            out_shape = str(tuple(result.shape)) if hasattr(result, "shape") else ""
+
+        est_kcy = int(wall_ms * 1_000 / HOST_US_PER_SIM_CYCLE)
 
         if self._labels_writer is not None:
-            self._labels_writer.writerow(
-                [seq, op_name, self._test_id, in_shapes, out_shape])
+            self._labels_writer.writerow([seq, op_name, self._test_id, in_shapes, out_shape])
             self._labels_fh.flush()
 
         self._records.append((
