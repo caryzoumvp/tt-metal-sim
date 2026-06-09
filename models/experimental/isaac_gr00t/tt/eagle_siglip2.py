@@ -218,7 +218,7 @@ class TtSigLIP2Encoder:
         pw = W // PATCH_SIZE   # 24
         n_patches = ph * pw    # 576
 
-        self._prof = TtOpProfiler()
+        self._prof = TtOpProfiler(device=self.device)
 
         # ── Patch embedding ───────────────────────────────────────────────────
         # CPU unfold + upload (not a TTNN op, time as one block)

@@ -109,6 +109,10 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--num-inference-timesteps", type=int, default=4)
     p.add_argument("--num-layers",     type=int, default=0,
                    help="Limit DiT layers (0 = all 32)")
+    p.add_argument("--siglip-layers",  type=int, default=27,
+                   help="Limit SigLIP2 vision backbone layers")
+    p.add_argument("--qwen3-layers",   type=int, default=16,
+                   help="Limit Qwen3 language backbone layers")
     p.add_argument("--image",          default="",
                    help="Path to an RGB image file (PNG/JPG, any size; resized to 336×336). "
                         "If omitted, a black 336×336 image is used.")
@@ -140,6 +144,9 @@ def main() -> None:
     print(f"Embodiment:  {args.embodiment_id}")
     print(f"Action H:    {args.action_horizon}")
     print(f"DiT steps:   {args.num_inference_timesteps}")
+    print(f"SigLIP2 L:   {args.siglip_layers}")
+    print(f"Qwen3 L:     {args.qwen3_layers}")
+    print(f"DiT L:       {args.num_layers if args.num_layers else 'all'}")
     print(f"Iterations:  {iterations}  ({'benchmark' if args.benchmark else 'run'})")
     print()
 
@@ -220,7 +227,11 @@ def main() -> None:
         print("Building TtEagleBackbone and uploading weights ...")
         t0 = time.perf_counter()
         tt_backbone = TtEagleBackbone.load_weights(
-            store=store, device=device, processor=processor,
+            store=store,
+            device=device,
+            processor=processor,
+            siglip_layers=args.siglip_layers,
+            qwen3_layers=args.qwen3_layers,
         )
         print(f"  done in {time.perf_counter() - t0:.1f}s\n")
 

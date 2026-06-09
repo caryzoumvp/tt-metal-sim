@@ -283,7 +283,7 @@ class TtQwen3Decoder:
         """
         B, T, _ = hidden_states_np.shape
 
-        self._prof = TtOpProfiler()
+        self._prof = TtOpProfiler(device=self.device)
 
         # RoPE tables for the full sequence length (built once per call)
         t0 = perf_counter_ns()

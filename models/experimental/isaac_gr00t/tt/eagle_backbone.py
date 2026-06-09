@@ -147,7 +147,7 @@ class TtMlp1Connector:
             float32 [B, 144, 2048]
         """
         B = x_np.shape[0]
-        self._prof = TtOpProfiler()
+        self._prof = TtOpProfiler(device=self.device)
 
         # pixel_shuffle + upload are CPU/numpy + one ttnn.from_torch — time as one block
         t0 = perf_counter_ns()
