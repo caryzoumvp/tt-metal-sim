@@ -12,15 +12,17 @@
 #include <tt-metalium/vector_aligned.hpp>
 
 #if defined(__x86_64__) || defined(__i386__)
-#include <emmintrin.h>
+#include <immintrin.h>
 #endif
 
+#if defined(__AVX2__)
 #define LOAD_STREAM_32()                                                               \
     do {                                                                               \
         _mm256_stream_si256((__m256i*)dst8, _mm256_loadu_si256((const __m256i*)src8)); \
         src8 += sizeof(__m256i);                                                       \
         dst8 += sizeof(__m256i);                                                       \
     } while (0)
+#endif
 
 #define LOAD_STREAM_16()                                                         \
     do {                                                                         \
@@ -57,29 +59,27 @@ void memcpy_to_device(void* __restrict dst, const void* __restrict src, size_t n
     // Ensure destination is properly aligned for optimal SIMD performance
     TT_ASSERT((uintptr_t)dst % MEMCPY_ALIGNMENT == 0);
 
+    const auto* src8 = static_cast<const uint8_t*>(src);
+    auto* dst8 = static_cast<uint8_t*>(dst);
+
+#if defined(__AVX2__)
     // Configuration for bulk processing: inner loop processes 8 x 32-byte operations
     // This creates 256-byte blocks (8 * 32 = 256 bytes) for maximum throughput
     constexpr uint32_t inner_loop = 8;
     constexpr uint32_t inner_blk_size = inner_loop * sizeof(__m256i);  // 256 bytes
 
-    const auto* src8 = static_cast<const uint8_t *>(src);
-    auto* dst8 = static_cast<uint8_t*>(dst);
-
     size_t num_lines = n / inner_blk_size;  // Number of 256-byte blocks to process
 
     // PHASE 1: Process 256-byte blocks 32 bytes at a time
-    // This is the main bulk processing phase for maximum efficiency
     if (num_lines > 0) {
         // Handle potential misalignment by processing a single 16-byte chunk first
-        // This ensures subsequent 32-byte operations are properly aligned
         // WARNING: This does not cover the case where dst is not 16-byte aligned
         if ((uintptr_t)dst8 % sizeof(__m256i) != 0) {
             LOAD_STREAM_16();
             n -= sizeof(__m128i);
-            num_lines = n / inner_blk_size;  // Recalculate after alignment adjustment
+            num_lines = n / inner_blk_size;
         }
 
-        // Main bulk processing loop: Each iteration processes a 256 byte block. Blocks are processed 32 bytes at a time.
         for (size_t i = 0; i < num_lines; ++i) {
             for (size_t j = 0; j < inner_loop; ++j) {
                 LOAD_STREAM_32();
@@ -91,25 +91,22 @@ void memcpy_to_device(void* __restrict dst, const void* __restrict src, size_t n
     // PHASE 2: Process remaining data that doesn't fill a complete 256-byte block
     if (n > 0) {
         // Phase 2.1: Process remaining 32-byte chunks
-        num_lines = n / sizeof(__m256i);  // Number of 32-byte blocks to process
+        num_lines = n / sizeof(__m256i);
         if (num_lines > 0) {
-            // Handle alignment for 32-byte operations if needed
-            // WARNING: This does not cover the case where dst is not 16-byte aligned
             if ((uintptr_t)dst8 % sizeof(__m256i) != 0) {
                 LOAD_STREAM_16();
                 n -= sizeof(__m128i);
-                num_lines = n / sizeof(__m256i);  // Recalculate after alignment adjustment
+                num_lines = n / sizeof(__m256i);
             }
 
-            // Process individual 32-byte blocks
             for (size_t i = 0; i < num_lines; ++i) {
                 LOAD_STREAM_32();
             }
             n -= num_lines * sizeof(__m256i);
         }
 
-        // PHASE 2.2: Process remaining 16-byte chunks
-        num_lines = n / sizeof(__m128i);  // Number of 16-byte blocks to process
+        // Phase 2.2: Process remaining 16-byte chunks
+        num_lines = n / sizeof(__m128i);
         if (num_lines > 0) {
             for (size_t i = 0; i < num_lines; ++i) {
                 LOAD_STREAM_16();
@@ -117,8 +114,8 @@ void memcpy_to_device(void* __restrict dst, const void* __restrict src, size_t n
             n -= num_lines * sizeof(__m128i);
         }
 
-        // PHASE 2.3: Process remaining 4-byte chunks
-        num_lines = n / sizeof(int32_t);  // Number of 4-byte blocks to process
+        // Phase 2.3: Process remaining 4-byte chunks
+        num_lines = n / sizeof(int32_t);
         if (num_lines > 0) {
             if ((uintptr_t)src8 % sizeof(int32_t) != 0) {
                 for (size_t i = 0; i < num_lines; ++i) {
@@ -132,18 +129,44 @@ void memcpy_to_device(void* __restrict dst, const void* __restrict src, size_t n
             n -= num_lines * sizeof(int32_t);
         }
 
-        // PHASE 2.4: Handle the final few bytes (< 4 bytes)
-        // We are the ones in control of and allocating the dst buffer,
-        // so writing a few bytes extra is okay because we are guaranteeing the size is adequate.
+        // Phase 2.4: Handle the final few bytes (< 4 bytes)
         if (n > 0) {
             int32_t val = 0;
             std::memcpy(&val, src8, n);
             _mm_stream_si32((int32_t*)dst8, val);
         }
     }
+#else
+    // SSE2-only path (no AVX/AVX2 available)
+    size_t num_lines = n / sizeof(__m128i);
+    if (num_lines > 0) {
+        for (size_t i = 0; i < num_lines; ++i) {
+            LOAD_STREAM_16();
+        }
+        n -= num_lines * sizeof(__m128i);
+    }
 
-    // Optional memory fence for debugging/synchronization
-    // Ensures all streaming stores complete before function returns
+    num_lines = n / sizeof(int32_t);
+    if (num_lines > 0) {
+        if ((uintptr_t)src8 % sizeof(int32_t) != 0) {
+            for (size_t i = 0; i < num_lines; ++i) {
+                LOAD_STREAM_4_UNALIGNED();
+            }
+        } else {
+            for (size_t i = 0; i < num_lines; ++i) {
+                LOAD_STREAM_4();
+            }
+        }
+        n -= num_lines * sizeof(int32_t);
+    }
+
+    if (n > 0) {
+        int32_t val = 0;
+        std::memcpy(&val, src8, n);
+        _mm_stream_si32((int32_t*)dst8, val);
+    }
+#endif
+
     if constexpr (debug_sync) {
         tt_driver_atomics::sfence();
     }
