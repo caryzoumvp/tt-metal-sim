@@ -1,0 +1,14 @@
+name: tt-isaac-gr00t
+channels:
+  - pytorch
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  - numpy=1.26.4
+  - pytorch=2.7.1
+  - torchvision=0.22.1
+  - cpuonly
+  - pip:
+      - -e /workspaces/tensix/tt-metal
+      - safetensors>=0.4.0

@@ -1,0 +1,9 @@
+diffusers==0.37.1
+dm-tree==0.1.10
+albumentations==2.0.8
+termcolor==3.3.0
+lmdb==2.2.0
+msgpack-numpy==0.4.8
+peft==0.18.1
+omegaconf==2.3.0
+tyro

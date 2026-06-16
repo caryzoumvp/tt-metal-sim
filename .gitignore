@@ -153,6 +153,7 @@ Testing
 .auto_triage/output
 .github/actions/*/node_modules/
 models/experimental/petr/resources/*.pth
+models/experimental/isaac_gr00t/GR00T-N1.6-3B/
 
 *.out
 *.err
