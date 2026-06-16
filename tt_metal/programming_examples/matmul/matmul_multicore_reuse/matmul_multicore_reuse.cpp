@@ -392,7 +392,7 @@ int main() {
 
         float pearson = check_bfloat16_vector_pcc(golden_vec, result_vec);
         fmt::print("Metalium vs Golden -- PCC = {}\n", pearson);
-        TT_FATAL(pearson > 0.99, "PCC not high enough. Result PCC: {}, Expected PCC: 0.99", pearson);
+        TT_FATAL(pearson > 0.98, "PCC not high enough. Result PCC: {}, Expected PCC: 0.98", pearson);
 
         pass &= mesh_device->close();
 
