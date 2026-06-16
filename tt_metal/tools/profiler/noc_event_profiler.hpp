@@ -14,6 +14,16 @@
 #include "kernel_profiler.hpp"
 #include "hostdevcommon/profiler_common.h"
 
+#if defined(SIM_PROFILE_LOG)
+// gem5 wormhole_sim profile sink for NoC events: 64-bit event metadata is
+// shipped as two consecutive MMIO writes (LO then HI). TensixMMIO latches LO
+// per-core and emits one CSV row on HI.
+static inline void sim_profile_noc_event_mmio(uint64_t ev64) {
+    *(volatile uint32_t*)0xFFB80208u = (uint32_t)(ev64 & 0xffffffffu);
+    *(volatile uint32_t*)0xFFB8020Cu = (uint32_t)(ev64 >> 32);
+}
+#endif
+
 namespace noc_event_profiler {
 
 template <bool DRAM = false>
@@ -94,6 +104,9 @@ FORCE_INLINE void recordNocEvent(
     local_noc_event.noc_type =
         (noc == 1) ? KernelProfilerNocEventMetadata::NocType::NOC_1 : KernelProfilerNocEventMetadata::NocType::NOC_0;
 
+#if defined(SIM_PROFILE_LOG)
+    sim_profile_noc_event_mmio(ev_md.asU64());
+#endif
     if constexpr (kernel_profiler::NON_DROPPING) {
         KernelProfilerNocEventMetadata dst_data =
             createNocEventDstTrailer<noc_event_type, posted>(local_addr, dst_local_addr);
@@ -137,6 +150,9 @@ FORCE_INLINE void recordMulticastNocEvent(
     local_noc_event.noc_type =
         (noc == 1) ? KernelProfilerNocEventMetadata::NocType::NOC_1 : KernelProfilerNocEventMetadata::NocType::NOC_0;
 
+#if defined(SIM_PROFILE_LOG)
+    sim_profile_noc_event_mmio(ev_md.asU64());
+#endif
     if constexpr (kernel_profiler::NON_DROPPING) {
         uint32_t dst_local_addr = decode_noc_addr_to_local_addr(dst_noc_addr);
         KernelProfilerNocEventMetadata dst_data =
