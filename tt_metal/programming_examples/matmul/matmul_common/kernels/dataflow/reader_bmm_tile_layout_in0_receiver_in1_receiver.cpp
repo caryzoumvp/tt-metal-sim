@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include "api/dataflow/dataflow_api.h"
 #include "hostdevcommon/common_values.hpp"
+#include "../profile_log.h"
 
 void kernel_main() {
     // in0 tensor args
@@ -72,6 +73,7 @@ void kernel_main() {
 
     for (uint32_t b = 0; b < batch; b++) {
         for (uint32_t block = 0; block < num_blocks; block++) {
+            profile_mark(PHASE_READER_BLOCK_START, block);
             // Operand 0
             cb_reserve_back(cb_id_in0, in0_block_num_tiles);
 
@@ -85,8 +87,10 @@ void kernel_main() {
 
             // wait on in0 semaphore value to become VALID (set by mcast sender after it multicasts data)
             noc_semaphore_wait(in0_mcast_receiver_semaphore_addr_ptr, VALID);
+            profile_mark(PHASE_READER_IN0_WAIT_MCAST, block);
 
             cb_push_back(cb_id_in0, in0_block_num_tiles);
+            profile_mark(PHASE_READER_IN0_AFTER_PUSH, block);
 
             // Operand 1
             cb_reserve_back(cb_id_in1, in1_block_num_tiles);
@@ -100,8 +104,10 @@ void kernel_main() {
 
             // wait on in1 semaphore value to become VALID (set by mcast sender after it multicasts data)
             noc_semaphore_wait(in1_mcast_receiver_semaphore_addr_ptr, VALID);
+            profile_mark(PHASE_READER_IN1_WAIT_MCAST, block);
 
             cb_push_back(cb_id_in1, in1_block_num_tiles);
+            profile_mark(PHASE_READER_IN1_AFTER_PUSH, block);
         }
     }
 }

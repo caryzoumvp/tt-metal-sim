@@ -6,6 +6,7 @@
 
 #include "api/compute/tile_move_copy.h"
 #include "api/compute/matmul.h"
+#include "../profile_log.h"
 
 void kernel_main() {
     uint32_t in0_block_w = get_compile_time_arg_val(0);              // inner block size in tiles
@@ -31,12 +32,16 @@ void kernel_main() {
         for (uint32_t block = 0; block < num_blocks; block++) {
             bool last_out = block == (num_blocks - 1);
 
+            MATH(profile_mark(PHASE_COMPUTE_BLOCK_START, block));
             cb_wait_front(tt::CBIndex::c_0, in0_block_num_tiles);
             cb_wait_front(tt::CBIndex::c_1, in1_block_num_tiles);
+            MATH(profile_mark(PHASE_COMPUTE_AFTER_WAIT_FRONT, block));
             int in0_index_subblock_offset = 0;
+            uint32_t subblock_idx = 0;
             for (uint32_t in0_subblock = 0; in0_subblock < in0_num_subblocks; in0_subblock++) {
                 int in1_index_subblock_offset = 0;
                 for (uint32_t in1_subblock = 0; in1_subblock < in1_num_subblocks; in1_subblock++) {
+                    MATH(profile_mark(PHASE_COMPUTE_SUBBLOCK_START, (block << 8) | subblock_idx));
                     tile_regs_acquire();
 
                     if (enable_reload) {
@@ -65,6 +70,7 @@ void kernel_main() {
                         }
                         in0_index_h_offset += in0_block_w;
                     }
+                    MATH(profile_mark(PHASE_COMPUTE_AFTER_MATMUL, (block << 8) | subblock_idx));
 
                     tile_regs_commit();
                     tile_regs_wait();
@@ -90,8 +96,10 @@ void kernel_main() {
                         cb_push_back(tt::CBIndex::c_24, out_subblock_num_tiles);
                     }
 
+                    PACK(profile_mark(PHASE_COMPUTE_AFTER_PACK, (block << 8) | subblock_idx));
                     tile_regs_release();
                     in1_index_subblock_offset += out_subblock_w;
+                    subblock_idx++;
                 }
                 in0_index_subblock_offset += in0_subblock_num_tiles;
             }
@@ -102,6 +110,7 @@ void kernel_main() {
 
             cb_pop_front(tt::CBIndex::c_0, in0_block_num_tiles);
             cb_pop_front(tt::CBIndex::c_1, in1_block_num_tiles);
+            MATH(profile_mark(PHASE_COMPUTE_BLOCK_END, block));
         }
     }
 }

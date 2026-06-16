@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "api/dataflow/dataflow_api.h"
+#include "../profile_log.h"
 
 void kernel_main() {
     // out tensor args
@@ -33,6 +34,7 @@ void kernel_main() {
     const auto s = TensorAccessor(s_args, out_tensor_addr);
 
     bool one_time_profile = true;
+    uint32_t subblock_idx = 0;
     for (uint32_t b = 0; b < batch; b++) {
         uint32_t out_tensor_sbh_start_tile_id = out_tensor_start_tile_id;
         for (uint32_t sbh = 0; sbh < out_num_subblocks_h; sbh++) {
@@ -40,6 +42,7 @@ void kernel_main() {
             for (uint32_t sbw = 0; sbw < out_num_subblocks_w; sbw++) {
                 uint32_t out_tensor_sb_row_start_tile_id = out_tensor_sbw_start_tile_id;
 
+                profile_mark(PHASE_WRITER_SUBBLOCK_START, subblock_idx);
                 cb_wait_front(cb_id_out0, out_subblock_tile_count);
                 uint32_t l1_read_addr = get_read_ptr(cb_id_out0);
 
@@ -54,6 +57,7 @@ void kernel_main() {
                     out_tensor_sb_row_start_tile_id += out_tensor_stride_h;
                 }
 
+                profile_mark(PHASE_WRITER_AFTER_WRITES_ISSUED, subblock_idx);
                 noc_async_write_barrier();  // This will wait until the write is done. As
                                             // an alternative, noc_async_write_flushed()
                                             // can be faster because it waits until the
@@ -61,7 +65,10 @@ void kernel_main() {
                                             // have to use noc_async_write_barrier() at
                                             // least once at the end of data movement kernel
                                             // to make sure all writes are done.
+                profile_mark(PHASE_WRITER_AFTER_BARRIER, subblock_idx);
                 cb_pop_front(cb_id_out0, out_subblock_tile_count);
+                profile_mark(PHASE_WRITER_AFTER_POP, subblock_idx);
+                subblock_idx++;
                 out_tensor_sbw_start_tile_id += out_tensor_next_subblock_stride_w;
             }
             out_tensor_sbh_start_tile_id += out_tensor_next_subblock_stride_h;
