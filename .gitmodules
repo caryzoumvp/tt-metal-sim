@@ -4,8 +4,8 @@
 	branch = master
 [submodule "tt_metal/third_party/umd"]
 	path = tt_metal/third_party/umd
-	url = https://github.com/tenstorrent/tt-umd.git
-	branch = main
+	url = https://github.com/caryzoumvp/tt-umd.git
+	branch = sim_dev_260616
 [submodule "models/demos/t3000/llama2_70b/reference/llama"]
 	path = models/demos/t3000/llama2_70b/reference/llama
 	url = https://github.com/tenstorrent-metal/llama.git
