@@ -237,6 +237,7 @@ uint32_t stream_wrap_gt(uint32_t a, uint32_t b) {
 
 FORCE_INLINE
 void wait_for_workers(uint32_t wait_count, uint32_t wait_stream) {
+    WAYPOINT("SWWW");
     WAYPOINT("WCW");
     last_wait_count = wait_count;
     last_wait_stream = wait_stream;
@@ -281,6 +282,7 @@ FORCE_INLINE void update_worker_completion_count_on_dispatch_d() {
 
 template <uint32_t noc_xy, uint32_t sem_id>
 FORCE_INLINE void cb_acquire_pages_dispatch_s(uint32_t n) {
+    WAYPOINT("SCBA");
     volatile tt_l1_ptr uint32_t* sem_addr =
         reinterpret_cast<volatile tt_l1_ptr uint32_t*>(get_semaphore<fd_core_type>(sem_id));
 
@@ -307,6 +309,7 @@ FORCE_INLINE void cb_release_pages_dispatch_s(uint32_t n) {
 
 FORCE_INLINE
 void process_go_signal_mcast_cmd() {
+    WAYPOINT("SGSB");
     volatile CQDispatchCmd tt_l1_ptr* cmd = (volatile CQDispatchCmd tt_l1_ptr*)cmd_ptr;
     uint32_t sync_index = cmd->mcast.wait_stream - first_stream_used;
     // Get semaphore that will be update by dispatch_d, signalling that it's safe to send a go signal
@@ -315,6 +318,7 @@ void process_go_signal_mcast_cmd() {
         reinterpret_cast<volatile tt_l1_ptr uint32_t*>(dispatch_s_sync_sem_base_addr + sync_index * L1_ALIGNMENT);
 
     WAYPOINT("DCW");
+    WAYPOINT("SGSY");
     // Wait for notification from dispatch_d, signalling that it's safe to send the go signal
     uint32_t& mcasts_sent = num_mcasts_sent[sync_index];
     while (wrap_ge(mcasts_sent, *sync_sem_addr)) {
@@ -338,6 +342,7 @@ void process_go_signal_mcast_cmd() {
     uint32_t wait_stream = cmd->mcast.wait_stream;
 
     if (multicast_go_offset != CQ_DISPATCH_CMD_GO_NO_MULTICAST_OFFSET) {
+        WAYPOINT("SGMC");
         // Setup registers before waiting for workers so only the NOC_CMD_CTRL register needs to be touched after.
         uint64_t dst_noc_addr_multicast =
             get_noc_addr_helper(worker_mcast_grid, mcast_go_signal_addr + sizeof(uint32_t) * multicast_go_offset);
@@ -375,6 +380,7 @@ void process_go_signal_mcast_cmd() {
     }
 
     *aligned_go_signal_storage = go_signal_value;
+    WAYPOINT("SGUC");
     if constexpr (virtualize_unicast_cores) {
         // Issue #19729: Workaround to allow TT-Mesh Workload dispatch to target active ethernet cores.
         // This chip is virtualizing cores the go signal is unicasted to
@@ -413,6 +419,7 @@ void process_go_signal_mcast_cmd() {
 
 FORCE_INLINE
 void process_dispatch_s_wait_cmd() {
+    WAYPOINT("SWTD");
     volatile CQDispatchCmd tt_l1_ptr* cmd = (volatile CQDispatchCmd tt_l1_ptr*)cmd_ptr;
     // Limited Usage of Wait CMD: dispatch_s should get a wait command only if it's not on the
     // same core as dispatch_d and is used to clear the worker count
@@ -443,6 +450,7 @@ void process_dispatch_s_wait_cmd() {
 
 FORCE_INLINE
 void set_num_worker_sems() {
+    WAYPOINT("SSWS");
     volatile CQDispatchCmd tt_l1_ptr* cmd = (volatile CQDispatchCmd tt_l1_ptr*)cmd_ptr;
     num_worker_sems = cmd->set_num_worker_sems.num_worker_sems;
     ASSERT(num_worker_sems <= max_num_worker_sems);
@@ -451,6 +459,7 @@ void set_num_worker_sems() {
 
 FORCE_INLINE
 void set_go_signal_noc_data() {
+    WAYPOINT("SSGD");
     volatile CQDispatchCmd tt_l1_ptr* cmd = (volatile CQDispatchCmd tt_l1_ptr*)cmd_ptr;
     uint32_t num_words = cmd->set_go_signal_noc_data.num_words;
     ASSERT(num_words <= max_num_go_signal_noc_data_entries);
@@ -549,7 +558,7 @@ void kernel_main() {
     // go signal is sent — the stall-detection window is per-program, not per-dispatch_s.
 #endif
     while (!done) {
-        DeviceZoneScopedN("CQ-DISPATCH-SUBORDINATE");
+        WAYPOINT("SLOP");
         rt_profiler_enabled = (rt_profiler_msg->realtime_profiler_core_noc_xy != 0);
         uint32_t popped_pid = 0;
         if (rt_profiler_enabled) {

@@ -990,6 +990,7 @@ uint32_t stream_wrap_ge(uint32_t a, uint32_t b) {
 }
 
 static void process_wait() {
+    WAYPOINT("DWTB");
     volatile CQDispatchCmd tt_l1_ptr* cmd =
         reinterpret_cast<volatile CQDispatchCmd tt_l1_ptr*>(l1_uncached_addr(cmd_ptr));
     auto flags = cmd->wait.flags;
@@ -1066,6 +1067,7 @@ static void process_delay_cmd() {
 
 FORCE_INLINE
 void process_go_signal_mcast_cmd() {
+    WAYPOINT("DGSB");
     volatile CQDispatchCmd tt_l1_ptr* cmd =
         reinterpret_cast<volatile CQDispatchCmd tt_l1_ptr*>(l1_uncached_addr(cmd_ptr));
     uint32_t stream = cmd->mcast.wait_stream;
@@ -1087,6 +1089,7 @@ void process_go_signal_mcast_cmd() {
     uint32_t num_unicasts = cmd->mcast.num_unicast_txns;
     uint32_t wait_count = cmd->mcast.wait_count;
     if (multicast_go_offset != CQ_DISPATCH_CMD_GO_NO_MULTICAST_OFFSET) {
+        WAYPOINT("DGMB");
         // Setup registers before waiting for workers so only the NOC_CMD_CTRL register needs to be touched after.
         uint64_t dst_noc_addr_multicast =
             get_noc_addr_helper(worker_mcast_grid, mcast_go_signal_addr + sizeof(uint32_t) * multicast_go_offset);
@@ -1102,6 +1105,7 @@ void process_go_signal_mcast_cmd() {
         noc_nonposted_writes_acked[noc_index] += num_dests;
 
         WAYPOINT("WCW");
+        WAYPOINT("DGWB");
         while (!stream_wrap_ge(
             NOC_STREAM_READ_REG(stream, STREAM_REMOTE_DEST_BUF_SPACE_AVAILABLE_REG_INDEX), wait_count)) {
         }
@@ -1110,6 +1114,7 @@ void process_go_signal_mcast_cmd() {
         noc_nonposted_writes_num_issued[noc_index] += 1;
     } else {
         WAYPOINT("WCW");
+        WAYPOINT("DGWB");
         while (!stream_wrap_ge(
             NOC_STREAM_READ_REG(stream, STREAM_REMOTE_DEST_BUF_SPACE_AVAILABLE_REG_INDEX), wait_count)) {
         }
@@ -1117,6 +1122,7 @@ void process_go_signal_mcast_cmd() {
     }
 
     *aligned_go_signal_storage_uncached = go_signal_value;
+    WAYPOINT("DGUB");
     if constexpr (virtualize_unicast_cores) {
         // Issue #19729: Workaround to allow TT-Mesh Workload dispatch to target active ethernet cores.
         // This chip is virtualizing cores the go signal is unicasted to
@@ -1147,6 +1153,7 @@ void process_go_signal_mcast_cmd() {
 
 FORCE_INLINE
 void process_notify_dispatch_s_go_signal_cmd() {
+    WAYPOINT("DNTS");
     // Update free running counter on dispatch_s, signalling that it's safe to send a go signal to workers
     volatile CQDispatchCmd tt_l1_ptr* cmd =
         reinterpret_cast<volatile CQDispatchCmd tt_l1_ptr*>(l1_uncached_addr(cmd_ptr));
@@ -1183,6 +1190,7 @@ void process_notify_dispatch_s_go_signal_cmd() {
 
 FORCE_INLINE
 void set_go_signal_noc_data() {
+    WAYPOINT("DSGD");
     volatile CQDispatchCmd tt_l1_ptr* cmd =
         reinterpret_cast<volatile CQDispatchCmd tt_l1_ptr*>(l1_uncached_addr(cmd_ptr));
     uint32_t num_words = cmd->set_go_signal_noc_data.num_words;
@@ -1562,8 +1570,7 @@ void kernel_main() {
 
     while (!done) {
         dispatch_cb_reader.wait_for_available_data_and_release_old_pages<DispatchTelemetryBlockGuard>(cmd_ptr);
-
-        DeviceZoneScopedN("CQ-DISPATCH");
+        WAYPOINT("DLOP");
         IDLE_ERISC_HEARTBEAT_AND_RETURN(heartbeat);
 
         done = is_d_variant ? process_cmd_d(cmd_ptr, l1_cache) : process_cmd_h(cmd_ptr);
