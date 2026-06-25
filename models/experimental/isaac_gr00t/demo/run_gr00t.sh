@@ -21,7 +21,6 @@ MODEL_PATH="${SCRIPT_DIR}/../GR00T-N1.6-3B"
 PY="${SCRIPT_DIR}/demo.py"
 DEFAULT_IMAGE="${SCRIPT_DIR}/../assets/test_image.png"
 DEFAULT_INSTRUCTION="pick up the cup"
-DEFAULT_LOG="${SCRIPT_DIR}/gr00t_sim.log"
 
 source ~/.conda_env.rc
 conda activate tt-isaac-gr00t
@@ -36,9 +35,7 @@ cd "${SCRIPT_DIR}"
 export TT_SIM_PROFILE=1
 export PYTHONUNBUFFERED=1
 
-LOG_PATH="${GR00T_LOG:-$DEFAULT_LOG}"
-CMD=(
-  python3 -u "${PY}"
+python3  "${PY}"
   --model-path "${MODEL_PATH}"
   --image "${DEFAULT_IMAGE}"
   --instruction "${DEFAULT_INSTRUCTION}"
@@ -48,11 +45,3 @@ CMD=(
   --num-inference-timesteps 1
   --num-layers 1
   "$@"
-)
-
-if [[ -n "${LOG_PATH}" ]]; then
-  echo "[run_gr00t] logging to ${LOG_PATH}"
-  "${CMD[@]}" 2>&1 | tee "${LOG_PATH}"
-else
-  "${CMD[@]}"
-fi

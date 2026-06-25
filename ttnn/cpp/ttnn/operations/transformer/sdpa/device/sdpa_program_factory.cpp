@@ -73,9 +73,8 @@ tt::DataFormat select_mask_dataformat(const std::optional<Tensor>& attn_mask, bo
     return use_streaming_compute ? tt::DataFormat::Float16_b : tt::DataFormat::Bfp4_b;
 }
 
-// Streaming compute (v2) handles every SDPA variant; only fp32 dest-accumulate falls back to the
-// legacy compute kernel.
-bool can_use_streaming_compute(bool fp32_dest_acc_en) { return !fp32_dest_acc_en; }
+// Force legacy SDPA compute in simulator debug runs; keep dtype/compute config unchanged.
+bool can_use_streaming_compute([[maybe_unused]] bool fp32_dest_acc_en) { return false; }
 
 uint32_t lightweight_mask_tile_count(bool is_causal, bool has_sliding_window, bool has_k_partial_mask) {
     uint32_t tiles = 1;  // neginf
