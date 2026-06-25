@@ -11,6 +11,7 @@
 #   bash run_gr00t.sh --output /tmp/gr00t_tt.npy
 #   bash run_gr00t.sh --image /path/to/image.png --instruction "open the drawer"
 #   bash run_gr00t.sh [any demo.py args ...]
+#
 
 set -euo pipefail
 
@@ -20,6 +21,7 @@ MODEL_PATH="${SCRIPT_DIR}/../GR00T-N1.6-3B"
 PY="${SCRIPT_DIR}/demo.py"
 DEFAULT_IMAGE="${SCRIPT_DIR}/../assets/test_image.png"
 DEFAULT_INSTRUCTION="pick up the cup"
+DEFAULT_LOG="${SCRIPT_DIR}/gr00t_sim.log"
 
 source ~/.conda_env.rc
 conda activate tt-isaac-gr00t
@@ -32,13 +34,25 @@ fi
 
 cd "${SCRIPT_DIR}"
 export TT_SIM_PROFILE=1
-python3 "${PY}" \
-  --model-path  "${MODEL_PATH}" \
-  --image       "${DEFAULT_IMAGE}" \
-  --instruction "${DEFAULT_INSTRUCTION}" \
-  --iterations 1 \
-  --siglip-layers 1 \
-  --qwen3-layers 1 \
-  --num-inference-timesteps 1 \
-  --num-layers 1 \
+export PYTHONUNBUFFERED=1
+
+LOG_PATH="${GR00T_LOG:-$DEFAULT_LOG}"
+CMD=(
+  python3 -u "${PY}"
+  --model-path "${MODEL_PATH}"
+  --image "${DEFAULT_IMAGE}"
+  --instruction "${DEFAULT_INSTRUCTION}"
+  --iterations 1
+  --siglip-layers 1
+  --qwen3-layers 1
+  --num-inference-timesteps 1
+  --num-layers 1
   "$@"
+)
+
+if [[ -n "${LOG_PATH}" ]]; then
+  echo "[run_gr00t] logging to ${LOG_PATH}"
+  "${CMD[@]}" 2>&1 | tee "${LOG_PATH}"
+else
+  "${CMD[@]}"
+fi
