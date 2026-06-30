@@ -82,6 +82,12 @@ volatile tt_l1_ptr uint32_t* profiler_control_buffer =
 volatile tt_l1_ptr profiler_msg_buffer_t* profiler_data_buffer =
     reinterpret_cast<volatile tt_l1_ptr profiler_msg_buffer_t*>(GET_MAILBOX_ADDRESS_DEV(profiler.buffer));
 
+#if defined(SIM_PROFILE_LOG)
+inline __attribute__((always_inline)) void sim_profile_zone_mmio(uint32_t timer_id) {
+    *(volatile uint32_t*)0xFFB80210u = timer_id;
+}
+#endif
+
 #if (PROFILE_KERNEL & PROFILER_OPT_DO_TRACE_ONLY)
 constexpr uint32_t myRiscID = 0;
 #else
@@ -284,6 +290,11 @@ __attribute__((noinline)) void finish_profiler() {
     risc_finished_profiling();
 #if defined(COMPILE_FOR_IDLE_ERISC) || (defined(COMPILE_FOR_AERISC) && (COMPILE_FOR_AERISC == 0)) || \
     defined(COMPILE_FOR_BRISC)
+#if defined(SIM_PROFILE_LOG_NO_DRAM_PROFILE)
+    profiler_control_buffer[RUN_COUNTER]++;
+    profiler_control_buffer[PROFILER_DONE] = 1;
+    return;
+#endif
     if (profiler_control_buffer[PROFILER_DONE] == 1) {
         return;
     }
@@ -476,15 +487,24 @@ template <uint32_t timer_id, DoingDispatch dispatch = DoingDispatch::NOT_DISPATC
 struct profileScope {
     bool start_marked = false;
     inline __attribute__((always_inline)) profileScope() {
+#if defined(SIM_PROFILE_LOG)
+        sim_profile_zone_mmio(timer_id);
+#endif
+#if !defined(SIM_PROFILE_LOG_NO_DRAM_PROFILE)
         if (bufferHasRoom<dispatch>()) {
             stackSize += PROFILER_L1_MARKER_UINT32_SIZE;
             start_marked = true;
             mark_time_at_index_inlined(wIndex, timer_id);
             wIndex += PROFILER_L1_MARKER_UINT32_SIZE;
         }
+#endif
     }
 
     inline __attribute__((always_inline)) ~profileScope() {
+#if defined(SIM_PROFILE_LOG)
+        sim_profile_zone_mmio(get_const_id(timer_id, ZONE_END));
+#endif
+#if !defined(SIM_PROFILE_LOG_NO_DRAM_PROFILE)
         if (start_marked) {
             mark_time_at_index_inlined(wIndex, get_const_id(timer_id, ZONE_END));
             wIndex += PROFILER_L1_MARKER_UINT32_SIZE;
@@ -496,6 +516,7 @@ struct profileScope {
                 }
             }
         }
+#endif
     }
 };
 
@@ -526,7 +547,12 @@ struct profileScopeGuaranteed {
             if constexpr (index == 0) {
                 init_profiler();
             }
+#if defined(SIM_PROFILE_LOG)
+            sim_profile_zone_mmio(get_const_id(timer_id, ZONE_START));
+#endif
+#if !defined(SIM_PROFILE_LOG_NO_DRAM_PROFILE)
             mark_time_at_index_inlined(start_index, get_const_id(timer_id, ZONE_START));
+#endif
         }
     }
     inline __attribute__((always_inline)) ~profileScopeGuaranteed() {
@@ -542,7 +568,12 @@ struct profileScopeGuaranteed {
                 profiler_control_buffer[DEVICE_BUFFER_END_INDEX_BR_ER] = wIndex;
             }
         } else {
+#if defined(SIM_PROFILE_LOG)
+            sim_profile_zone_mmio(get_const_id(timer_id, ZONE_END));
+#endif
+#if !defined(SIM_PROFILE_LOG_NO_DRAM_PROFILE)
             mark_time_at_index_inlined(end_index, get_const_id(timer_id, ZONE_END));
+#endif
             if constexpr (index == 0) {
                 finish_profiler();
             }
@@ -582,6 +613,9 @@ template <
     PacketTypes packet_type = kernel_profiler::PacketTypes::TS_DATA,
     typename... Args>
 inline __attribute__((always_inline)) void timeStampedData(uint64_t data, Args... trailers) {
+#if defined(SIM_PROFILE_LOG_NO_DRAM_PROFILE)
+    return;
+#endif
     constexpr uint32_t total_data_count = 1 + sizeof...(trailers);
     constexpr uint32_t expected_size = kernel_profiler::TimestampedDataSize<packet_type>::size;
 
@@ -606,6 +640,9 @@ inline __attribute__((always_inline)) void timeStampedData(uint64_t data, Args..
 
 template <DoingDispatch dispatch = DoingDispatch::NOT_DISPATCH>
 inline __attribute__((always_inline)) void recordEvent(uint16_t event_id) {
+#if defined(SIM_PROFILE_LOG_NO_DRAM_PROFILE)
+    return;
+#endif
     if (bufferHasRoom<dispatch>()) {
         mark_time_at_index_inlined(wIndex, get_id(event_id, TS_EVENT));
         wIndex += PROFILER_L1_MARKER_UINT32_SIZE;

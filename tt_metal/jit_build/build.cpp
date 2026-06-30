@@ -199,6 +199,7 @@ void JitBuildEnv::init(
     // event-emission site is still gated by its own enable (WATCHER_ENABLED
     // for waypoint, PROFILE_NOC_EVENTS for NoC events).
     this->defines_ += "-DSIM_PROFILE_LOG=1 ";
+    this->defines_ += "-DSIM_PROFILE_LOG_NO_DRAM_PROFILE=1 ";
     if (rtoptions.get_experimental_noc_debug_dump_enabled()) {
         this->defines_ += "-DDEVICE_DEBUG_DUMP=1 ";
     }

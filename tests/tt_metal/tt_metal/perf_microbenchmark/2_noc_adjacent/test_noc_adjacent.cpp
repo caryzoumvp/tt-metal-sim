@@ -69,7 +69,8 @@ int main(int argc, char** argv) {
     }
 
     bool pass = true;
-    std::vector<double> measured_bandwidth;
+    std::vector<double> measured_device_bandwidth;
+    std::vector<double> measured_host_wall_bandwidth;
 
     ////////////////////////////////////////////////////////////////////////////
     //                      Initial Runtime Args Parse
@@ -155,6 +156,18 @@ int main(int argc, char** argv) {
         auto device = tt_metal::distributed::MeshDevice::create_unit_mesh(device_id);
 
         int clock_freq_mhz = get_tt_npu_clock(device->get_devices()[0]);
+        if (clock_freq_mhz <= 0) {
+            const char* sim_clock_mhz_env = std::getenv("TT_METAL_SIM_CLOCK_MHZ");
+            clock_freq_mhz = sim_clock_mhz_env != nullptr ? std::stoi(sim_clock_mhz_env) : 1000;
+            if (clock_freq_mhz <= 0) {
+                log_error(LogTest, "TT_METAL_SIM_CLOCK_MHZ must be positive when the device clock is unavailable");
+                return 1;
+            }
+            log_warning(
+                LogTest,
+                "Device clock query returned 0 MHz; using {} MHz for simulator bandwidth estimate",
+                clock_freq_mhz);
+        }
         auto grid_coord = device->compute_with_storage_grid_size();
         num_cores_c = (num_cores_c == 0) ? grid_coord.x : num_cores_c;
         num_cores_r = (num_cores_r == 0) ? grid_coord.y : num_cores_r;
@@ -240,23 +253,52 @@ int main(int argc, char** argv) {
             tt_metal::distributed::EnqueueMeshWorkload(device->mesh_command_queue(), mesh_workload, false);
             tt_metal::distributed::Finish(device->mesh_command_queue());
             auto t_end = std::chrono::steady_clock::now();
-            unsigned long elapsed_us = duration_cast<microseconds>(t_end - t_begin).count();
-            unsigned long elapsed_cc = clock_freq_mhz * elapsed_us;
+            unsigned long host_elapsed_us = duration_cast<microseconds>(t_end - t_begin).count();
+            unsigned long host_elapsed_cc = clock_freq_mhz * host_elapsed_us;
+            unsigned long device_elapsed_cc = 0;
 
-            log_info(LogTest, "Time elapsed for NOC transfers: {}us ({}cycles)", elapsed_us, elapsed_cc);
+            log_info(
+                LogTest,
+                "Host wall time for NOC transfers: {}us ({}cycles at {} MHz reference)",
+                host_elapsed_us,
+                host_elapsed_cc,
+                clock_freq_mhz);
 
             if (use_device_profiler) {
-                elapsed_cc = get_t0_to_any_riscfw_end_cycle(
+                device_elapsed_cc = get_t0_to_any_riscfw_end_cycle(
                     device->get_devices()[0], mesh_workload.get_programs().begin()->second);
-                elapsed_us = (double)elapsed_cc / clock_freq_mhz;
-                log_info(LogTest, "Time elapsed using device profiler: {}us ({}cycles)", elapsed_us, elapsed_cc);
+                const double device_elapsed_us = (double)device_elapsed_cc / clock_freq_mhz;
+                log_info(
+                    LogTest,
+                    "Device profiler time for NOC transfers: {:.3f}us ({}cycles)",
+                    device_elapsed_us,
+                    device_elapsed_cc);
             }
 
-            // total transfer amount per core = tile size * number of tiles
-            // NOC bandwidth = total transfer amount per core / elapsed clock cycle
-            measured_bandwidth.push_back((double)single_tile_size * num_tiles / elapsed_cc);
+            // Total transfer amount per core = tile size * number of tiles.
+            // Device bandwidth is the primary metric. Host-wall bandwidth is
+            // only a simulator/reference metric and includes host/gem5 runtime.
+            if (host_elapsed_cc == 0) {
+                log_error(LogTest, "Host elapsed cycle count is zero; cannot compute host-wall NOC bandwidth");
+                measured_host_wall_bandwidth.push_back(0.0);
+                pass = false;
+            } else {
+                measured_host_wall_bandwidth.push_back((double)single_tile_size * num_tiles / host_elapsed_cc);
+            }
+            if (use_device_profiler) {
+                if (device_elapsed_cc == 0) {
+                    log_error(LogTest, "Device elapsed cycle count is zero; cannot compute device NOC bandwidth");
+                    measured_device_bandwidth.push_back(0.0);
+                    pass = false;
+                } else {
+                    measured_device_bandwidth.push_back((double)single_tile_size * num_tiles / device_elapsed_cc);
+                }
+            }
 
-            log_info(LogTest, "Measured NOC bandwidth: {:.3f}B/cc", measured_bandwidth[i]);
+            if (use_device_profiler) {
+                log_info(LogTest, "Measured device NOC bandwidth: {:.3f}B/cc", measured_device_bandwidth[i]);
+            }
+            log_info(LogTest, "Measured host-wall NOC bandwidth: {:.6f}B/cc", measured_host_wall_bandwidth[i]);
         }
 
         pass &= device->close();
@@ -267,18 +309,22 @@ int main(int argc, char** argv) {
     }
 
     // Determine if it passes performance goal
-    auto avg_measured_bandwidth = calculate_average(measured_bandwidth);
+    auto avg_measured_device_bandwidth = calculate_average(measured_device_bandwidth);
+    auto avg_measured_host_wall_bandwidth = calculate_average(measured_host_wall_bandwidth);
     if (pass && !bypass_check) {
         // goal is 95% of theoretical peak using a single NOC channel
         // theoretical peak: 32bytes per clock cycle
         double target_bandwidth = 32.0 * 0.9;
-        if (avg_measured_bandwidth < target_bandwidth) {
+        if (!use_device_profiler) {
+            pass = false;
+            log_error(LogTest, "Performance check requires --use-device-profiler for device-time bandwidth");
+        } else if (avg_measured_device_bandwidth < target_bandwidth) {
             pass = false;
             log_error(
                 LogTest,
                 "The NOC bandwidth does not meet the criteria. "
                 "Current: {:.3f}B/cc, goal: >={:.3f}B/cc",
-                avg_measured_bandwidth,
+                avg_measured_device_bandwidth,
                 target_bandwidth);
         }
     }
@@ -297,7 +343,8 @@ int main(int argc, char** argv) {
         NOC_DIRECTIONToString(static_cast<NOC_DIRECTION>(noc_direction)),
         ACCESS_TYPEToString(static_cast<ACCESS_TYPE>(access_type)),
         use_device_profiler);
-    log_info(tt::LogTest, "CSV_OUTPUT:Bandwidth(B/cc):{:.3f}", avg_measured_bandwidth);
+    log_info(tt::LogTest, "CSV_OUTPUT:DeviceBandwidth(B/cc):{:.3f}", avg_measured_device_bandwidth);
+    log_info(tt::LogTest, "CSV_OUTPUT:HostWallBandwidth(B/cc):{:.6f}", avg_measured_host_wall_bandwidth);
     log_info(tt::LogTest, "CSV_RESULT:pass:{}", pass);
 
     if (pass) {

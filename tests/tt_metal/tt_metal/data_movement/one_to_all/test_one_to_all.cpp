@@ -1266,6 +1266,35 @@ TEST_F(GenericMeshDeviceFixture, TensixDataMovementOneToAllMulticastPacketSizes2
         mesh_device, test_case_id, is_multicast, is_linked, mst_core_coord, sub_start_core_coord, sub_grid_size);
 }
 
+/* ========== Broadcast golden ========== */
+TEST_F(GenericMeshDeviceFixture, TensixDataMovementOneToAllBroadcastGoldenSingle2_0) {
+    uint32_t test_case_id = unit_tests::dm::core_to_all::START_ID_2_0 + 13;
+
+    auto mesh_device = get_mesh_device();
+    auto [bytes_per_page, max_transmittable_bytes, max_transmittable_pages] =
+        unit_tests::dm::compute_physical_constraints(mesh_device);
+    (void)max_transmittable_bytes;
+
+    TT_FATAL(max_transmittable_pages >= 1, "Need at least one L1 page for broadcast golden test");
+
+    unit_tests::dm::core_to_all::OneToAllConfig test_config = {
+        .test_id = test_case_id,
+        .mst_core_coord = {0, 0},
+        .sub_start_core_coord = {1, 1},
+        .sub_grid_size = {2, 2},
+        .num_of_transactions = 1,
+        .pages_per_transaction = 1,
+        .bytes_per_page = bytes_per_page,
+        .l1_data_format = DataFormat::Float16_b,
+        .noc_id = NOC::NOC_0,
+        .loopback = false,
+        .is_multicast = true,
+        .is_linked = true,
+    };
+
+    EXPECT_TRUE(unit_tests::dm::core_to_all::run_dm(mesh_device, test_config));
+}
+
 /* ========== MULTICAST LINKED ========== */
 
 /* ========== 2x2 ========= */

@@ -28,6 +28,7 @@ show_help() {
     echo "  --build-tests                    Build All Testcases."
     echo "  --build-ttnn-tests               Build ttnn Testcases."
     echo "  --build-metal-tests              Build metal Testcases."
+    echo "  --build-noc-perf-tests           Build NoC performance and data-movement test targets."
     echo "  --build-umd-tests                Build umd Testcases."
     echo "  --build-programming-examples     Build programming examples."
     echo "  --build-tt-train                 Build tt-train."
@@ -74,6 +75,7 @@ build_dir=""
 build_tests="OFF"
 build_ttnn_tests="OFF"
 build_metal_tests="OFF"
+build_noc_perf_tests="OFF"
 build_umd_tests="OFF"
 build_programming_examples="OFF"
 build_tt_train="OFF"
@@ -116,6 +118,7 @@ build-dir:
 build-tests
 build-ttnn-tests
 build-metal-tests
+build-noc-perf-tests
 build-umd-tests
 build-programming-examples
 build-tt-train
@@ -181,6 +184,8 @@ while true; do
             build_ttnn_tests="ON";;
         --build-metal-tests)
             build_metal_tests="ON";;
+        --build-noc-perf-tests)
+            build_noc_perf_tests="ON";;
         --build-umd-tests)
             build_umd_tests="ON";;
         --build-programming-examples)
@@ -285,6 +290,7 @@ echo "INFO: Enable time trace: $enable_time_trace"
 echo "INFO: Build directory: $build_dir"
 echo "INFO: Install Prefix: $cmake_install_prefix"
 echo "INFO: Build tests: $build_tests"
+echo "INFO: Build NoC perf tests: $build_noc_perf_tests"
 echo "INFO: Enable PCH: $pch"
 echo "INFO: Enable Unity builds: $unity_builds"
 echo "INFO: TTNN Shared sub libs : $ttnn_shared_sub_libs"
@@ -300,6 +306,9 @@ cmake_args+=("-B" "$build_dir")
 cmake_args+=("-G" "Ninja")
 cmake_args+=("-DCMAKE_BUILD_TYPE=$build_type")
 cmake_args+=("-DCMAKE_INSTALL_PREFIX=$cmake_install_prefix")
+cmake_args+=("-DTT_METAL_BUILD_TESTS=OFF")
+cmake_args+=("-DTTNN_BUILD_TESTS=OFF")
+cmake_args+=("-DTT_UMD_BUILD_TESTS=OFF")
 
 if [ "$cxx_compiler_path" != "" ]; then
     echo "INFO: C++ compiler: $cxx_compiler_path"
@@ -343,6 +352,10 @@ if [ "$build_tests" = "ON" ]; then
 fi
 
 if [ "$build_metal_tests" = "ON" ]; then
+    cmake_args+=("-DTT_METAL_BUILD_TESTS=ON")
+fi
+
+if [ "$build_noc_perf_tests" = "ON" ]; then
     cmake_args+=("-DTT_METAL_BUILD_TESTS=ON")
 fi
 
@@ -438,13 +451,34 @@ echo "INFO: Running: cmake "${cmake_args[@]}""
 cmake "${cmake_args[@]}"
 
 if [ "$build_packages" == "ON" ];  then
-  target="package"
+  build_targets=("package")
+elif [ "$build_noc_perf_tests" = "ON" ]; then
+  build_targets=(
+    "test_compute_mm"
+    "test_noc_unicast_vs_multicast_to_single_core_latency"
+    "test_noc_unicast_vs_multicast_to_single_core_latency_worker"
+    "test_noc_adjacent"
+    "test_noc_rtor"
+    "test_dram_offchip"
+    "test_kernel_launch"
+    "test_dram_read"
+    "test_dram_read_l1_write"
+    "test_dram_read_remote_cb"
+    "test_remote_cb_sync_matmul"
+    "test_gathering"
+    "matmul_global_l1"
+    "matmul_local_l1"
+    "test_noc_read_global_l1"
+    "test_noc_read_local_l1"
+    "unit_tests_data_movement"
+    "test_noc_estimator"
+  )
 else
-  target="install"
+  build_targets=("install")
 fi
 
 # Build libraries and cpp tests
 if [ "$configure_only" = "OFF" ]; then
-    echo "INFO: Building Project"
-    cmake --build $build_dir --target $target
+    echo "INFO: Building Project targets: ${build_targets[*]}"
+    cmake --build "$build_dir" --target "${build_targets[@]}"
 fi
