@@ -383,6 +383,16 @@ TEST_F(GenericMeshDeviceFixture, TensixDataMovementOneFromOneDirectedIdeal) {
         mesh_device, test_id, master_core_coord, subordinate_core_coord);
 }
 
+TEST_F(MeshDeviceFixture, TensixDataMovementOneFromOnePacketSizesSlowDispatch) {
+    auto mesh_device = devices_[0];
+    unit_tests::dm::core_from_core::packet_sizes_test(mesh_device, 905, CoreCoord(0, 0), CoreCoord(1, 1));
+}
+
+TEST_F(MeshDeviceFixture, TensixDataMovementOneFromOneDirectedIdealSlowDispatch) {
+    auto mesh_device = devices_[0];
+    unit_tests::dm::core_from_core::directed_ideal_test(mesh_device, 951, CoreCoord(0, 0), CoreCoord(0, 1));
+}
+
 TEST_F(GenericMeshDeviceFixture, TensixDataMovementOneFromOneVirtualChannels) {
     GTEST_SKIP() << "Skipping test";
     // Test ID (Arbitrary)

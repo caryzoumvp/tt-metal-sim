@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "multi_device_fixture.hpp"
+#include "device_fixture.hpp"
 #include "tt_metal/test_utils/comparison.hpp"
 #include "tt_metal/test_utils/stimulus.hpp"
 #include "tt_metal/test_utils/print_helpers.hpp"
@@ -182,6 +183,12 @@ TEST_F(GenericMeshDeviceFixture, TensixDataMovementOneToAllMulticastSchemesNoLoo
     bool loopback = false;
 
     unit_tests::dm::core_to_all::multicast_schemes::run_all_tests(get_mesh_device(), test_case_id, loopback);
+}
+
+TEST_F(MeshDeviceFixture, TensixDataMovementOneToAllMulticastSchemesNoLoopbackSlowDispatch) {
+    uint32_t test_case_id = unit_tests::dm::core_to_all::START_ID_2_0 + 910;
+    bool loopback = false;
+    unit_tests::dm::core_to_all::multicast_schemes::run_all_tests(devices_[0], test_case_id, loopback);
 }
 
 /* ============================================================= */

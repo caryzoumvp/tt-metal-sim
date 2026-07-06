@@ -260,6 +260,45 @@ TEST_F(GenericMeshDeviceFixture, TensixDataMovementLoopbackDirectedIdeal) {
     EXPECT_TRUE(run_dm(mesh_device, test_config));
 }
 
+TEST_F(MeshDeviceFixture, TensixDataMovementLoopbackPacketSizesSlowDispatch) {
+    auto mesh_device = devices_[0];
+    auto arch_ = mesh_device->impl().get_device(0)->arch();
+    uint32_t max_transactions = 256;
+    uint32_t max_transaction_size_pages = arch_ == ARCH::BLACKHOLE ? 1024 : 2048;
+    uint32_t page_size_bytes = arch_ == ARCH::BLACKHOLE ? 64 : 32;
+
+    for (uint32_t num_of_transactions = 1; num_of_transactions <= max_transactions; num_of_transactions *= 4) {
+        for (uint32_t transaction_size_pages = 1; transaction_size_pages <= max_transaction_size_pages;
+             transaction_size_pages *= 2) {
+            unit_tests::dm::core_loopback::LoopbackConfig test_config = {
+                .test_id = unit_tests::dm::core_loopback::START_ID + 900,
+                .master_core_coord = {0, 0},
+                .num_of_transactions = num_of_transactions,
+                .transaction_size_pages = transaction_size_pages,
+                .page_size_bytes = page_size_bytes,
+                .l1_data_format = DataFormat::Float16_b,
+                .noc_id = NOC::NOC_0,
+            };
+            EXPECT_TRUE(run_dm(mesh_device, test_config));
+        }
+    }
+}
+
+TEST_F(MeshDeviceFixture, TensixDataMovementLoopbackDirectedIdealSlowDispatch) {
+    auto mesh_device = devices_[0];
+    auto [page_size_bytes, max_transmittable_bytes, max_transmittable_pages] =
+        tt::tt_metal::unit_tests::dm::compute_physical_constraints(mesh_device);
+    unit_tests::dm::core_loopback::LoopbackConfig test_config = {
+        .test_id = 955,
+        .master_core_coord = {0, 0},
+        .num_of_transactions = 128,
+        .transaction_size_pages = max_transmittable_pages / (128 * 2),
+        .page_size_bytes = page_size_bytes,
+        .l1_data_format = DataFormat::Float16_b,
+        .noc_id = NOC::NOC_0};
+    EXPECT_TRUE(run_dm(mesh_device, test_config));
+}
+
 /* ========== Metal 2.0 variants ========== */
 TEST_F(GenericMeshDeviceFixture, TensixDataMovementLoopbackPacketSizes_2_0) {
     auto mesh_device = get_mesh_device();

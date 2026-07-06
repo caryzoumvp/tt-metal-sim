@@ -4,6 +4,7 @@
 
 #include "kernel_types.hpp"
 #include "multi_device_fixture.hpp"
+#include "device_fixture.hpp"
 #include "dm_common.hpp"
 #include <tt-metalium/distributed.hpp>
 #include <tt-metalium/mesh_coord.hpp>
@@ -275,6 +276,33 @@ TEST_F(GenericMeshDeviceFixture, TensixNocApiLatencyMulticastWriteAll) {
     CoreCoord grid_size = device->compute_with_storage_grid_size();
     tt::tt_metal::unit_tests::dm::noc_api_latency::multicast_write_sweep_test(
         this->mesh_device_, test_case_id, {0, 0}, {grid_size.x - 1, grid_size.y - 1}, true);
+}
+
+TEST_F(MeshDeviceFixture, TensixNocApiLatencyUnicastWriteSlowDispatch) {
+    tt::tt_metal::unit_tests::dm::noc_api_latency::unicast_sweep_test(
+        devices_[0], 9700, unit_tests::dm::noc_api_latency::KernelType::UNICAST_WRITE);
+}
+
+TEST_F(MeshDeviceFixture, TensixNocApiLatencyUnicastReadSlowDispatch) {
+    tt::tt_metal::unit_tests::dm::noc_api_latency::unicast_sweep_test(
+        devices_[0], 9701, unit_tests::dm::noc_api_latency::KernelType::UNICAST_READ);
+}
+
+TEST_F(MeshDeviceFixture, TensixNocApiLatencyStatefulWriteSlowDispatch) {
+    tt::tt_metal::unit_tests::dm::noc_api_latency::unicast_sweep_test(
+        devices_[0], 9702, unit_tests::dm::noc_api_latency::KernelType::STATEFUL_WRITE);
+}
+
+TEST_F(MeshDeviceFixture, TensixNocApiLatencyStatefulReadSlowDispatch) {
+    tt::tt_metal::unit_tests::dm::noc_api_latency::unicast_sweep_test(
+        devices_[0], 9703, unit_tests::dm::noc_api_latency::KernelType::STATEFUL_READ);
+}
+
+TEST_F(MeshDeviceFixture, TensixNocApiLatencyMulticastWriteAllSlowDispatch) {
+    auto* device = devices_[0]->get_device(0);
+    CoreCoord grid_size = device->compute_with_storage_grid_size();
+    tt::tt_metal::unit_tests::dm::noc_api_latency::multicast_write_sweep_test(
+        devices_[0], 9706, {0, 0}, {grid_size.x - 1, grid_size.y - 1}, true);
 }
 
 }  // namespace tt::tt_metal

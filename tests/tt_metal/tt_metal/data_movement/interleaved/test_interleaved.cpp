@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "multi_device_fixture.hpp"
+#include "device_fixture.hpp"
 #include "tt_metal/test_utils/comparison.hpp"
 #include "tt_metal/test_utils/stimulus.hpp"
 #include "tt_metal/test_utils/print_helpers.hpp"
@@ -385,6 +386,86 @@ TEST_F(GenericMeshDeviceFixture, TensixDataMovementDRAMInterleavedPageDirectedId
         .cores = core_range_set};
 
     // Run
+    EXPECT_TRUE(run_dm(mesh_device, test_config));
+}
+
+TEST_F(MeshDeviceFixture, TensixDataMovementDRAMInterleavedPageReadNumbersSlowDispatch) {
+    auto mesh_device = devices_[0];
+    auto [flit_size_bytes, max_transmittable_bytes, max_transmittable_flits] =
+        tt::tt_metal::unit_tests::dm::compute_physical_constraints(mesh_device);
+    uint32_t max_page_size_bytes = 256 * flit_size_bytes;
+    uint32_t max_num_pages = 256;
+    uint32_t num_of_transactions = 1;
+    uint32_t num_pages;
+    CoreRangeSet core_range_set({CoreRange({0, 0}, {0, 0})});
+
+    for (uint32_t pages = 1; pages <= max_num_pages; pages *= 4) {
+        if (pages > 16) {
+            num_of_transactions = pages / 16;
+            num_pages = 16;
+        } else {
+            num_pages = pages;
+        }
+        for (uint32_t page_size_bytes = flit_size_bytes; page_size_bytes <= max_page_size_bytes; page_size_bytes *= 2) {
+            unit_tests::dm::interleaved_page::InterleavedConfig test_config = {
+                .test_id = 9063,
+                .num_of_transactions = num_of_transactions,
+                .num_pages = num_pages,
+                .page_size_bytes = page_size_bytes,
+                .l1_data_format = DataFormat::Float16_b,
+                .cores = core_range_set,
+                .is_dram = true,
+                .read_kernel = true,
+                .write_kernel = false};
+            EXPECT_TRUE(run_dm(mesh_device, test_config));
+        }
+    }
+}
+
+TEST_F(MeshDeviceFixture, TensixDataMovementDRAMInterleavedPageWriteNumbersSlowDispatch) {
+    auto mesh_device = devices_[0];
+    auto [flit_size_bytes, max_transmittable_bytes, max_transmittable_flits] =
+        tt::tt_metal::unit_tests::dm::compute_physical_constraints(mesh_device);
+    uint32_t max_page_size_bytes = 256 * flit_size_bytes;
+    uint32_t max_num_pages = 256;
+    uint32_t num_of_transactions = 1;
+    uint32_t num_pages;
+    CoreRangeSet core_range_set({CoreRange({0, 0}, {0, 0})});
+
+    for (uint32_t pages = 1; pages <= max_num_pages; pages *= 4) {
+        if (pages > 16) {
+            num_of_transactions = pages / 16;
+            num_pages = 16;
+        } else {
+            num_pages = pages;
+        }
+        for (uint32_t page_size_bytes = flit_size_bytes; page_size_bytes <= max_page_size_bytes; page_size_bytes *= 2) {
+            unit_tests::dm::interleaved_page::InterleavedConfig test_config = {
+                .test_id = 9064,
+                .num_of_transactions = num_of_transactions,
+                .num_pages = num_pages,
+                .page_size_bytes = page_size_bytes,
+                .l1_data_format = DataFormat::Float16_b,
+                .cores = core_range_set,
+                .is_dram = true,
+                .read_kernel = false,
+                .write_kernel = true};
+            EXPECT_TRUE(run_dm(mesh_device, test_config));
+        }
+    }
+}
+
+TEST_F(MeshDeviceFixture, TensixDataMovementDRAMInterleavedPageDirectedIdealSlowDispatch) {
+    auto mesh_device = devices_[0];
+    auto [flit_size_bytes, max_transmittable_bytes, max_transmittable_flits] =
+        tt::tt_metal::unit_tests::dm::compute_physical_constraints(mesh_device);
+    unit_tests::dm::interleaved_page::InterleavedConfig test_config = {
+        .test_id = 9065,
+        .num_of_transactions = 16,
+        .num_pages = 16,
+        .page_size_bytes = 256 * flit_size_bytes,
+        .l1_data_format = DataFormat::Float16_b,
+        .cores = CoreRangeSet({CoreRange({0, 0}, {0, 0})})};
     EXPECT_TRUE(run_dm(mesh_device, test_config));
 }
 

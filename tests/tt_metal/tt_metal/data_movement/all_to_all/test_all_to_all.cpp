@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "multi_device_fixture.hpp"
+#include "device_fixture.hpp"
 #include "tt_metal/test_utils/comparison.hpp"
 #include "tt_metal/test_utils/stimulus.hpp"
 #include "tt_metal/test_utils/print_helpers.hpp"
@@ -467,6 +468,20 @@ TEST_F(GenericMeshDeviceFixture, TensixDataMovementAllToAllPacketSizes) {
 
     unit_tests::dm::all_to_all::packet_sizes_test(
         mesh_device, test_case_id, mst_start_coord, sub_start_coord, mst_grid_size, sub_grid_size);
+}
+
+TEST_F(MeshDeviceFixture, TensixDataMovementAllToAllDirectedIdealSlowDispatch) {
+    auto mesh_device = devices_[0];
+    auto* device = mesh_device->impl().get_device(0);
+    CoreCoord full_grid = {device->compute_with_storage_grid_size().x, device->compute_with_storage_grid_size().y};
+    unit_tests::dm::all_to_all::directed_ideal_test(mesh_device, 9300, CoreCoord(0, 0), CoreCoord(0, 0), full_grid, full_grid);
+}
+
+TEST_F(MeshDeviceFixture, TensixDataMovementAllToAllPacketSizesSlowDispatch) {
+    auto mesh_device = devices_[0];
+    auto* device = mesh_device->impl().get_device(0);
+    CoreCoord full_grid = {device->compute_with_storage_grid_size().x, device->compute_with_storage_grid_size().y};
+    unit_tests::dm::all_to_all::packet_sizes_test(mesh_device, 9301, CoreCoord(0, 0), CoreCoord(0, 0), full_grid, full_grid);
 }
 
 /* ======== 2x2 to 1x1 ======== */

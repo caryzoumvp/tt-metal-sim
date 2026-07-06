@@ -1031,6 +1031,93 @@ TEST_F(GenericMeshDeviceFixture, TensixDataMovementOneToAllMulticastLinkedSemaph
         pages_override_factor);
 }
 
+TEST_F(MeshDeviceFixture, TensixDataMovementOneToAllUnicastPacketSizesSlowDispatch) {
+    auto mesh_device = devices_[0];
+    auto* device = mesh_device->impl().get_device(0);
+    unit_tests::dm::core_to_all::packet_sizes_test(
+        mesh_device,
+        unit_tests::dm::core_to_all::START_ID + 902,
+        false,
+        false,
+        {0, 0},
+        {0, 0},
+        {device->compute_with_storage_grid_size().x, device->compute_with_storage_grid_size().y});
+}
+
+TEST_F(MeshDeviceFixture, TensixDataMovementOneToAllMulticastPacketSizesSlowDispatch) {
+    auto mesh_device = devices_[0];
+    auto* device = mesh_device->impl().get_device(0);
+    unit_tests::dm::core_to_all::packet_sizes_test(
+        mesh_device,
+        unit_tests::dm::core_to_all::START_ID + 905,
+        true,
+        false,
+        {0, 0},
+        {0, 0},
+        {device->compute_with_storage_grid_size().x, device->compute_with_storage_grid_size().y});
+}
+
+TEST_F(MeshDeviceFixture, TensixDataMovementOneToAllMulticastLinkedPacketSizesSlowDispatch) {
+    auto mesh_device = devices_[0];
+    auto* device = mesh_device->impl().get_device(0);
+    unit_tests::dm::core_to_all::packet_sizes_test(
+        mesh_device,
+        unit_tests::dm::core_to_all::START_ID + 908,
+        true,
+        true,
+        {0, 0},
+        {0, 0},
+        {device->compute_with_storage_grid_size().x, device->compute_with_storage_grid_size().y});
+}
+
+TEST_F(MeshDeviceFixture, TensixDataMovementOneToAllUnicastDirectedIdealSlowDispatch) {
+    auto mesh_device = devices_[0];
+    auto* device = mesh_device->impl().get_device(0);
+    unit_tests::dm::core_to_all::directed_ideal_test(
+        mesh_device,
+        9052,
+        false,
+        false,
+        {0, 0},
+        {0, 0},
+        {device->compute_with_storage_grid_size().x, device->compute_with_storage_grid_size().y},
+        true,
+        NOC::NOC_0,
+        0);
+}
+
+TEST_F(MeshDeviceFixture, TensixDataMovementOneToAllMulticastDirectedIdealSlowDispatch) {
+    auto mesh_device = devices_[0];
+    auto* device = mesh_device->impl().get_device(0);
+    unit_tests::dm::core_to_all::directed_ideal_test(
+        mesh_device,
+        9053,
+        true,
+        false,
+        {0, 0},
+        {0, 0},
+        {device->compute_with_storage_grid_size().x, device->compute_with_storage_grid_size().y},
+        true,
+        NOC::NOC_0,
+        0);
+}
+
+TEST_F(MeshDeviceFixture, TensixDataMovementOneToAllMulticastLinkedDirectedIdealSlowDispatch) {
+    auto mesh_device = devices_[0];
+    auto* device = mesh_device->impl().get_device(0);
+    unit_tests::dm::core_to_all::directed_ideal_test(
+        mesh_device,
+        9054,
+        true,
+        true,
+        {0, 0},
+        {0, 0},
+        {device->compute_with_storage_grid_size().x, device->compute_with_storage_grid_size().y},
+        true,
+        NOC::NOC_0,
+        0);
+}
+
 /* ========== VIRTUAL CHANNELS ========== */
 TEST_F(GenericMeshDeviceFixture, TensixDataMovementOneToAllUnicastVirtualChannels) {  // Expose loopback here?
     GTEST_SKIP() << "Skipping test";

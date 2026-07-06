@@ -403,6 +403,16 @@ TEST_F(GenericMeshDeviceFixture, TensixDataMovementOneToOneDirectedIdeal) {
     );
 }
 
+TEST_F(MeshDeviceFixture, TensixDataMovementOneToOnePacketSizesSlowDispatch) {
+    auto mesh_device = devices_[0];
+    unit_tests::dm::core_to_core::packet_sizes_test(mesh_device, 904);
+}
+
+TEST_F(MeshDeviceFixture, TensixDataMovementOneToOneDirectedIdealSlowDispatch) {
+    auto mesh_device = devices_[0];
+    unit_tests::dm::core_to_core::directed_ideal_test(mesh_device, 950, CoreCoord(0, 0), CoreCoord(0, 1));
+}
+
 TEST_F(GenericMeshDeviceFixture, TensixDataMovementOneToOneVirtualChannels) {
     GTEST_SKIP() << "Skipping test";
     // Test ID (Arbitrary)

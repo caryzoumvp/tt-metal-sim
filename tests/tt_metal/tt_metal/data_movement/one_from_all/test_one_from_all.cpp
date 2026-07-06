@@ -435,6 +435,24 @@ TEST_F(GenericMeshDeviceFixture, TensixDataMovementOneFromAllDirectedIdeal) {
         mesh_device, test_id, master_core_coord, subordinate_start_coord, subordinate_grid_size);
 }
 
+TEST_F(MeshDeviceFixture, TensixDataMovementOneFromAllPacketSizesSlowDispatch) {
+    auto mesh_device = devices_[0];
+    auto* device = mesh_device->impl().get_device(0);
+    CoreCoord subordinate_grid_size = {
+        device->compute_with_storage_grid_size().x, device->compute_with_storage_grid_size().y};
+    unit_tests::dm::core_from_all::packet_sizes_test(
+        mesh_device, 915, CoreCoord(0, 0), CoreCoord(0, 0), subordinate_grid_size);
+}
+
+TEST_F(MeshDeviceFixture, TensixDataMovementOneFromAllDirectedIdealSlowDispatch) {
+    auto mesh_device = devices_[0];
+    auto* device = mesh_device->impl().get_device(0);
+    CoreCoord subordinate_grid_size = {
+        device->compute_with_storage_grid_size().x, device->compute_with_storage_grid_size().y};
+    unit_tests::dm::core_from_all::directed_ideal_test(
+        mesh_device, 930, CoreCoord(0, 0), CoreCoord(0, 0), subordinate_grid_size);
+}
+
 TEST_F(GenericMeshDeviceFixture, TensixDataMovementOneFromAllVirtualChannels) {
     GTEST_SKIP() << "Skipping test";
 

@@ -21,10 +21,20 @@ Options:
                                latency sanity test.
   --run-adjacent               Run the adjacent directional NoC sweep.
   --run-rtor                   Include the RToR sweep.
+  --run-stress-mcast           Run the disabled legacy NoC multicast stress
+                               gtest explicitly.
+  --run-one-packet             Run focused one-packet NoC data-movement tests.
+  --run-core-bidirectional     Run bidirectional core-to-core NoC tests.
+  --run-multicast-atomics      Run multicast atomic semaphore tests.
+  --run-multicast-schemes      Run the active one-to-all multicast schemes sweep.
+  --run-all-to-all             Run all-to-all NoC data-movement tests.
+  --run-sdpa-reduce            Run legacy `sdpa_reduce_c` from unit_tests_legacy.
+  --run-transpose-hc           Run legacy `transpose_hc` from unit_tests_legacy.
   --run-broadcast-golden       Run the one-to-all broadcast golden test.
   --run-noc-api-latency        Run focused NOC API latency tests.
   --run-noc-estimator          Run the full hardware NocEstimator* GTest sweep
                                from unit_tests_data_movement.
+  --run-perf-base              Run the full baseline performance suite group.
   --run-all, all               Run every test group above.
 
 Environment:
@@ -259,6 +269,38 @@ run_if_exists() {
     return "${status}"
 }
 
+run_if_exists_fast_dispatch() {
+    local name="$1"
+    local bin="$2"
+    shift 2
+
+    if [[ ! -x "${bin}" ]]; then
+        echo "SKIP ${name}: missing executable ${bin}"
+        return 0
+    fi
+
+    echo
+    echo "==== ${name} ===="
+
+    local marker_seq
+    local status=0
+    host_marker_start "${name}"
+    marker_seq="${HOST_MARKER_SEQ}"
+
+    (
+        cd "${TT_METAL_ROOT}"
+        env \
+            TT_METAL_DEVICE_PROFILER_NOC_EVENTS=1 \
+            TT_METAL_PROFILER_PROGRAM_SUPPORT_COUNT="${TT_METAL_PROFILER_PROGRAM_SUPPORT_COUNT}" \
+            TT_METAL_FORCE_JIT_COMPILE="${TT_METAL_FORCE_JIT_COMPILE}" \
+            TT_METAL_SLOW_DISPATCH_MODE=0 \
+            "$bin" "$@"
+    ) || status=$?
+
+    host_marker_end "${marker_seq}" "${name}"
+    return "${status}"
+}
+
 find_test_bin() {
     local rel="$1"
     local candidate
@@ -293,17 +335,39 @@ OUT_ROOT="${WORMHOLE_SIM_ROOT}/m5out_noc_perf_sweep_$(date +%Y%m%d_%H%M%S)"
 run_single_dest=0
 run_adjacent=0
 run_rtor=0
+run_stress_mcast=0
+run_one_packet=0
+run_core_bidirectional=0
+run_multicast_atomics=0
+run_multicast_schemes=0
+run_all_to_all=0
+run_sdpa_reduce=0
+run_transpose_hc=0
 run_broadcast_golden=0
 run_noc_api_latency=0
 run_noc_estimator=0
+run_perf_base=0
+
+select_perf_base() {
+    run_perf_base=1
+}
 
 select_all_tests() {
     run_single_dest=1
     run_adjacent=1
     run_rtor=1
+    run_stress_mcast=1
+    run_one_packet=1
+    run_core_bidirectional=1
+    run_multicast_atomics=1
+    run_multicast_schemes=1
+    run_all_to_all=1
+    run_sdpa_reduce=1
+    run_transpose_hc=1
     run_broadcast_golden=1
     run_noc_api_latency=1
     run_noc_estimator=1
+    select_perf_base
 }
 
 while (($#)); do
@@ -324,6 +388,38 @@ while (($#)); do
             run_rtor=1
             shift
             ;;
+        --run-stress-mcast)
+            run_stress_mcast=1
+            shift
+            ;;
+        --run-one-packet)
+            run_one_packet=1
+            shift
+            ;;
+        --run-core-bidirectional)
+            run_core_bidirectional=1
+            shift
+            ;;
+        --run-multicast-atomics)
+            run_multicast_atomics=1
+            shift
+            ;;
+        --run-multicast-schemes)
+            run_multicast_schemes=1
+            shift
+            ;;
+        --run-all-to-all)
+            run_all_to_all=1
+            shift
+            ;;
+        --run-sdpa-reduce)
+            run_sdpa_reduce=1
+            shift
+            ;;
+        --run-transpose-hc)
+            run_transpose_hc=1
+            shift
+            ;;
         --run-broadcast-golden)
             run_broadcast_golden=1
             shift
@@ -334,6 +430,10 @@ while (($#)); do
             ;;
         --run-noc-estimator)
             run_noc_estimator=1
+            shift
+            ;;
+        --run-perf-base)
+            select_perf_base
             shift
             ;;
         --run-all|all)
@@ -361,10 +461,19 @@ TT_METAL_FORCE_JIT_COMPILE="${TT_METAL_FORCE_JIT_COMPILE:-0}"
 if (( run_single_dest == 0 &&
       run_adjacent == 0 &&
       run_rtor == 0 &&
+      run_stress_mcast == 0 &&
+      run_one_packet == 0 &&
+      run_core_bidirectional == 0 &&
+      run_multicast_atomics == 0 &&
+      run_multicast_schemes == 0 &&
+      run_all_to_all == 0 &&
+      run_sdpa_reduce == 0 &&
+      run_transpose_hc == 0 &&
       run_broadcast_golden == 0 &&
       run_noc_api_latency == 0 &&
-      run_noc_estimator == 0 )); then
-    echo "No test group selected. Pass one or more --run-* options, or pass all." >&2
+      run_noc_estimator == 0 &&
+      run_perf_base == 0 )); then
+    echo "No test group selected. Pass one or more --run-* options, --run-perf-base, or pass all." >&2
     usage
     exit 2
 fi
@@ -395,6 +504,85 @@ NOC_ADJ="$(find_test_bin "test/tt_metal/perf_microbenchmark/2_noc_adjacent/Debug
 DM_TESTS="$(find_test_bin "test/tt_metal/Debug/unit_tests_data_movement")"
 
 TEST_FAILURES=0
+
+if [[ "${run_perf_base}" == "1" ]]; then
+    if ! run_if_exists \
+        "perf_base_dram_unary" \
+        "${DM_TESTS}" \
+        --gtest_filter='MeshDeviceFixture.TensixDataMovementDRAMPacketSizesSlowDispatch:MeshDeviceFixture.TensixDataMovementDRAMDirectedIdealSlowDispatch'; then
+        TEST_FAILURES=$((TEST_FAILURES + 1))
+    fi
+
+    if ! run_if_exists \
+        "perf_base_one_to_one" \
+        "${DM_TESTS}" \
+        --gtest_filter='MeshDeviceFixture.TensixDataMovementOneToOnePacketSizesSlowDispatch:MeshDeviceFixture.TensixDataMovementOneToOneDirectedIdealSlowDispatch'; then
+        TEST_FAILURES=$((TEST_FAILURES + 1))
+    fi
+
+    if ! run_if_exists \
+        "perf_base_one_from_one" \
+        "${DM_TESTS}" \
+        --gtest_filter='MeshDeviceFixture.TensixDataMovementOneFromOnePacketSizesSlowDispatch:MeshDeviceFixture.TensixDataMovementOneFromOneDirectedIdealSlowDispatch'; then
+        TEST_FAILURES=$((TEST_FAILURES + 1))
+    fi
+
+    if ! run_if_exists \
+        "perf_base_loopback" \
+        "${DM_TESTS}" \
+        --gtest_filter='MeshDeviceFixture.TensixDataMovementLoopbackPacketSizesSlowDispatch:MeshDeviceFixture.TensixDataMovementLoopbackDirectedIdealSlowDispatch'; then
+        TEST_FAILURES=$((TEST_FAILURES + 1))
+    fi
+
+    if ! run_if_exists \
+        "perf_base_dram_interleaved" \
+        "${DM_TESTS}" \
+        --gtest_filter='MeshDeviceFixture.TensixDataMovementDRAMInterleavedPageReadNumbersSlowDispatch:MeshDeviceFixture.TensixDataMovementDRAMInterleavedPageWriteNumbersSlowDispatch:MeshDeviceFixture.TensixDataMovementDRAMInterleavedPageDirectedIdealSlowDispatch'; then
+        TEST_FAILURES=$((TEST_FAILURES + 1))
+    fi
+
+    if ! run_if_exists \
+        "perf_base_one_to_all" \
+        "${DM_TESTS}" \
+        --gtest_filter='MeshDeviceFixture.TensixDataMovementOneToAllUnicastPacketSizesSlowDispatch:MeshDeviceFixture.TensixDataMovementOneToAllMulticastPacketSizesSlowDispatch:MeshDeviceFixture.TensixDataMovementOneToAllMulticastLinkedPacketSizesSlowDispatch:MeshDeviceFixture.TensixDataMovementOneToAllUnicastDirectedIdealSlowDispatch:MeshDeviceFixture.TensixDataMovementOneToAllMulticastDirectedIdealSlowDispatch:MeshDeviceFixture.TensixDataMovementOneToAllMulticastLinkedDirectedIdealSlowDispatch'; then
+        TEST_FAILURES=$((TEST_FAILURES + 1))
+    fi
+
+    if ! run_if_exists \
+        "perf_base_one_to_all_multicast_schemes" \
+        "${DM_TESTS}" \
+        --gtest_filter='MeshDeviceFixture.TensixDataMovementOneToAllMulticastSchemesNoLoopbackSlowDispatch'; then
+        TEST_FAILURES=$((TEST_FAILURES + 1))
+    fi
+
+    if ! run_if_exists \
+        "perf_base_one_from_all" \
+        "${DM_TESTS}" \
+        --gtest_filter='MeshDeviceFixture.TensixDataMovementOneFromAllPacketSizesSlowDispatch:MeshDeviceFixture.TensixDataMovementOneFromAllDirectedIdealSlowDispatch'; then
+        TEST_FAILURES=$((TEST_FAILURES + 1))
+    fi
+
+    if ! run_if_exists \
+        "perf_base_all_to_all" \
+        "${DM_TESTS}" \
+        --gtest_filter='MeshDeviceFixture.TensixDataMovementAllToAllPacketSizesSlowDispatch:MeshDeviceFixture.TensixDataMovementAllToAllDirectedIdealSlowDispatch'; then
+        TEST_FAILURES=$((TEST_FAILURES + 1))
+    fi
+
+    if ! run_if_exists \
+        "perf_base_all_from_all" \
+        "${DM_TESTS}" \
+        --gtest_filter='MeshDeviceFixture.TensixDataMovementAllFromAllPacketSizesSlowDispatch:MeshDeviceFixture.TensixDataMovementAllFromAllDirectedIdealSlowDispatch'; then
+        TEST_FAILURES=$((TEST_FAILURES + 1))
+    fi
+
+    if ! run_if_exists \
+        "perf_base_noc_api_latency" \
+        "${DM_TESTS}" \
+        --gtest_filter='MeshDeviceFixture.TensixNocApiLatencyUnicastWriteSlowDispatch:MeshDeviceFixture.TensixNocApiLatencyUnicastReadSlowDispatch:MeshDeviceFixture.TensixNocApiLatencyStatefulWriteSlowDispatch:MeshDeviceFixture.TensixNocApiLatencyStatefulReadSlowDispatch:MeshDeviceFixture.TensixNocApiLatencyMulticastWriteAllSlowDispatch'; then
+        TEST_FAILURES=$((TEST_FAILURES + 1))
+    fi
+fi
 
 if [[ "${run_single_dest}" == "1" ]]; then
     if ! run_if_exists "single_dest_unicast_multicast" "${NOC_SIMPLE}"; then
@@ -444,6 +632,82 @@ if [[ "${run_rtor}" == "1" ]]; then
             fi
         done
     done
+fi
+
+if [[ "${run_stress_mcast}" == "1" ]]; then
+    LEGACY_TESTS="$(find_test_bin "test/tt_metal/Debug/unit_tests_legacy")"
+    if ! run_if_exists \
+        "stress_noc_mcast_legacy" \
+        "${LEGACY_TESTS}" \
+        --gtest_filter=MeshDeviceSingleCardFixture.DISABLED_StressNocMcast \
+        --gtest_also_run_disabled_tests; then
+        TEST_FAILURES=$((TEST_FAILURES + 1))
+    fi
+fi
+
+if [[ "${run_one_packet}" == "1" ]]; then
+    if ! run_if_exists \
+        "one_packet_directed_ideal" \
+        "${DM_TESTS}" \
+        --gtest_filter=GenericMeshDeviceFixture.TensixDataMovementOnePacket*DirectedIdeal*; then
+        TEST_FAILURES=$((TEST_FAILURES + 1))
+    fi
+fi
+
+if [[ "${run_core_bidirectional}" == "1" ]]; then
+    if ! run_if_exists \
+        "core_bidirectional" \
+        "${DM_TESTS}" \
+        --gtest_filter=GenericMeshDeviceFixture.TensixDataMovementCoreBidirectional*; then
+        TEST_FAILURES=$((TEST_FAILURES + 1))
+    fi
+fi
+
+if [[ "${run_multicast_atomics}" == "1" ]]; then
+    if ! run_if_exists \
+        "multicast_atomics" \
+        "${DM_TESTS}" \
+        --gtest_filter=GenericMeshDeviceFixture.MulticastAtomic*; then
+        TEST_FAILURES=$((TEST_FAILURES + 1))
+    fi
+fi
+
+if [[ "${run_multicast_schemes}" == "1" ]]; then
+    if ! run_if_exists \
+        "multicast_schemes_2_0" \
+        "${DM_TESTS}" \
+        --gtest_filter=GenericMeshDeviceFixture.TensixDataMovementOneToAllMulticastSchemesNoLoopback2_0; then
+        TEST_FAILURES=$((TEST_FAILURES + 1))
+    fi
+fi
+
+if [[ "${run_all_to_all}" == "1" ]]; then
+    if ! run_if_exists \
+        "all_to_all" \
+        "${DM_TESTS}" \
+        --gtest_filter=GenericMeshDeviceFixture.TensixDataMovementAllToAll*; then
+        TEST_FAILURES=$((TEST_FAILURES + 1))
+    fi
+fi
+
+if [[ "${run_sdpa_reduce}" == "1" ]]; then
+    LEGACY_TESTS="$(find_test_bin "test/tt_metal/Debug/unit_tests_legacy")"
+    if ! run_if_exists \
+        "sdpa_reduce_c" \
+        "${LEGACY_TESTS}" \
+        --gtest_filter=UnitMeshCQSingleCardSharedFixture.NIGHTLY_SdpaReduceC; then
+        TEST_FAILURES=$((TEST_FAILURES + 1))
+    fi
+fi
+
+if [[ "${run_transpose_hc}" == "1" ]]; then
+    LEGACY_TESTS="$(find_test_bin "test/tt_metal/Debug/unit_tests_legacy")"
+    if ! run_if_exists \
+        "transpose_hc" \
+        "${LEGACY_TESTS}" \
+        --gtest_filter=MeshDeviceSingleCardFixture.TransposeHC; then
+        TEST_FAILURES=$((TEST_FAILURES + 1))
+    fi
 fi
 
 if [[ "${run_broadcast_golden}" == "1" ]]; then

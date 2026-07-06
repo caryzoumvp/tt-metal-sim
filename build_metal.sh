@@ -470,6 +470,7 @@ elif [ "$build_noc_perf_tests" = "ON" ]; then
     "matmul_local_l1"
     "test_noc_read_global_l1"
     "test_noc_read_local_l1"
+    "unit_tests_legacy"
     "unit_tests_data_movement"
     "test_noc_estimator"
   )

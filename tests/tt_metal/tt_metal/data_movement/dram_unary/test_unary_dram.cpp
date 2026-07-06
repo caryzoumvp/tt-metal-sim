@@ -363,6 +363,14 @@ TEST_F(GenericMeshDeviceFixture, TensixDataMovementDRAMDirectedIdeal) {
     unit_tests::dm::dram::directed_ideal_test(mesh_device, test_id);
 }
 
+TEST_F(MeshDeviceFixture, TensixDataMovementDRAMPacketSizesSlowDispatch) {
+    unit_tests::dm::dram::packet_sizes_test(devices_[0], 9000, {0, 0});
+}
+
+TEST_F(MeshDeviceFixture, TensixDataMovementDRAMDirectedIdealSlowDispatch) {
+    unit_tests::dm::dram::directed_ideal_test(devices_[0], 9003);
+}
+
 /* ========== Test case for varying transaction numbers and sizes with 2.0 API; Test id = 40 ========== */
 TEST_F(GenericMeshDeviceFixture, TensixDataMovementDRAMPacketSizes2_0) {
     auto mesh_device = get_mesh_device();

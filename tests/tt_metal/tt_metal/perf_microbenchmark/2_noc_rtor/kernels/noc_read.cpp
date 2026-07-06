@@ -14,7 +14,10 @@ void kernel_main() {
 
     constexpr uint32_t cb_id = 0;
     uint32_t single_tile_size_bytes = get_tile_size(cb_id);
-    const auto s = TensorAccessor(TensorAccessorArgs<0>(), l1_buffer_addr);
+    const auto s = TensorAccessor(
+        tensor_accessor::make_interleaved_dspec</*is_dram=*/false>(),
+        l1_buffer_addr,
+        single_tile_size_bytes);
 
     uint32_t cb_addr;
     cb_reserve_back(cb_id, 1);
@@ -22,7 +25,7 @@ void kernel_main() {
 
     for (uint32_t i = 0; i < iter_count; i++) {
         uint32_t i_256 = i & 0xFF;
-        uint64_t l1_buffer_noc_addr = get_noc_addr(i_256 * num_cores + core_index, s);
+        uint64_t l1_buffer_noc_addr = s.get_noc_addr(i_256 * num_cores + core_index);
         noc_async_read(l1_buffer_noc_addr, cb_addr, single_tile_size_bytes);
         noc_async_read_barrier();
     }
