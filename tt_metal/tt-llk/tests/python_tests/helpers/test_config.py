@@ -371,7 +371,18 @@ class TestConfig:
 
         TestConfig.LLK_ROOT = sources_path
         TestConfig.TESTS_WORKING_DIR = TestConfig.LLK_ROOT / "tests"
-        TestConfig.TOOL_PATH = TestConfig.LLK_ROOT / "tests/sfpi/compiler/bin"
+        sfpi_tool_path = os.environ.get("TT_LLK_SFPI_TOOL_PATH")
+        sfpi_tool_candidates = [
+            Path(sfpi_tool_path) if sfpi_tool_path else None,
+            TestConfig.LLK_ROOT / "tests/sfpi/compiler/bin",
+            TestConfig.LLK_ROOT.parent.parent / "runtime/sfpi/compiler/bin",
+            TestConfig.LLK_ROOT.parent.parent
+            / "build_Release/libexec/tt-metalium/runtime/sfpi/compiler/bin",
+        ]
+        TestConfig.TOOL_PATH = next(
+            (path for path in sfpi_tool_candidates if path and (path / "riscv-tt-elf-g++").exists()),
+            TestConfig.LLK_ROOT / "tests/sfpi/compiler/bin",
+        )
 
         TestConfig.HELPERS = TestConfig.TESTS_WORKING_DIR / "helpers"
         TestConfig.RISCV_SOURCES = TestConfig.TESTS_WORKING_DIR / "helpers/src"
@@ -490,8 +501,9 @@ class TestConfig:
             f"-DTENSIX_FIRMWARE -DENV_LLK_INFRA -DKERNEL_BUILD -DENABLE_LLK_ASSERT {TestConfig.ARCH_DEFINE} "
             f"{'-DSPEED_OF_LIGHT' if TestConfig.SPEED_OF_LIGHT else ''}"
         )
+        sfpi_include = TestConfig.TOOL_PATH.parents[1] / "include"
         TestConfig.INCLUDES = [
-            "-Isfpi/include",
+            f"-I{sfpi_include}",
             f"-I../{TestConfig.ARCH_LLK_ROOT}/llk_lib",
             f"-I../{TestConfig.ARCH_LLK_ROOT}/common/inc",
             f"-I../{TestConfig.ARCH_LLK_ROOT}/common/inc/sfpu",
