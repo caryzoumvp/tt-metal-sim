@@ -35,13 +35,13 @@ cd "${SCRIPT_DIR}"
 export TT_SIM_PROFILE=1
 export PYTHONUNBUFFERED=1
 
-python3  "${PY}"
-  --model-path "${MODEL_PATH}"
-  --image "${DEFAULT_IMAGE}"
-  --instruction "${DEFAULT_INSTRUCTION}"
-  --iterations 1
-  --siglip-layers 1
-  --qwen3-layers 1
-  --num-inference-timesteps 1
-  --num-layers 1
+python3 "${PY}" \
+  --model-path "${MODEL_PATH}" \
+  --image "${DEFAULT_IMAGE}" \
+  --instruction "${DEFAULT_INSTRUCTION}" \
+  --iterations 1 \
+  --siglip-layers 1 \
+  --qwen3-layers 1 \
+  --num-inference-timesteps 1 \
+  --num-layers 1 \
   "$@"
